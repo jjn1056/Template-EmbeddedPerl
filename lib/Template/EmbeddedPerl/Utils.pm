@@ -9,6 +9,7 @@ our @EXPORT_OK = qw(
   normalize_linefeeds
   uri_escape
   escape_javascript
+  generate_error_message
 );
 
 # uri_escape is a function from URI::Escape
@@ -50,6 +51,23 @@ sub escape_javascript {
   } else {
       return "";
   }
+}
+
+sub generate_error_message {
+  my ($msg, $template) = @_;
+
+  return $msg unless $msg =~ m/\(.+?\)/;
+  $msg =~ m/.*?line\s+(\d+).*/; my $line = $1; $line--;# Because zero index
+  $msg =~ s/\(.*?\) //g;
+  $msg.= "\n";
+
+  my $start = $line -1 > 0 ? $line -1 : 0;
+  my $end = $line + 1 < scalar(@$template) ? $line + 1 : scalar(@$template) - 1;
+  for my $i ($start..$end) {
+    $msg .= "@{[ $i+1 ]}: $template->[$i]\n";
+  }
+
+  return "$msg\n";
 }
 
 1;

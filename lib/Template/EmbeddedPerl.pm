@@ -7,7 +7,7 @@ use PPI::Document;
 use Module::Runtime;
 use File::Spec;
 use Template::EmbeddedPerl::Compiled;
-use Template::EmbeddedPerl::Utils qw(normalize_linefeeds);
+use Template::EmbeddedPerl::Utils qw(normalize_linefeeds generate_error_message);
 use Template::EmbeddedPerl::SafeString;
 
 ## New Instance of the core template methods
@@ -34,6 +34,8 @@ sub new {
     sandbox_ns => 'Template::YAT::Sandbox',
     directories => [],
     template_extension => 'yat',
+    auto_escape => 0,
+    auto_flatten_expr => 1,
     @_,
   );
   my $self = bless \%args, $class;
@@ -84,7 +86,7 @@ sub from_string {
 
   my @template = split(/\n/, $template);
   my @parsed = $self->parse_template($template);
-  my $code = $self->compile(@parsed);
+  my $code = $self->compile(\@template, @parsed);
 
   $self->{template} = \@template;
   $self->{parsed} = \@parsed;
@@ -176,34 +178,39 @@ sub parse_template {
 }
 
 sub compile {
-  my ($self, @parsed) = @_;
+  my ($self, $template, @parsed) = @_;
 
   my $compiled = '';
+  my $safe_or_not = $self->{auto_escape} ? ' safe ' : '';
+  my $flatten_or_not = $self->{auto_flatten_expr} ? ' join "", ' : '';
+
   for my $block (@parsed) {
     next if $block eq '';
     my ($type, $content, $has_unmatched_open, $has_unmatched_closed) = @$block;
 
     if ($type eq 'expr') { # [[= ... ]]
-      $compiled .= '$_O .= safe_concat ' . $content . ";";
+      $compiled .= '$_O .= ' . $flatten_or_not . $safe_or_not . $content . ";";
     } elsif ($type eq 'code') { # [[ ... ]]
       $compiled .= $content . ";";
     } else {
       # if \\n is present in the content, replace it with ''
-      $content =~ s/^\\\n//;
+      my $escaped_newline = $content =~ s/^\\\n//;
       $content =~ s/^\\\\/\\/;   
-      $compiled .= "\$_O .= \"" . quotemeta($content) . "\";"
+      $compiled .= "\$_O .= \"" . quotemeta($content) . "\";";
+      $compiled .= "\n" if $escaped_newline;
     }
   }
 
   $compiled = "use strict; use warnings; sub { my \$_O = ''; $compiled; return \$_O; }";
   $compiled = "package @{[ $self->{sandbox_ns} ]}; $compiled";
 
-  warn $compiled;
+  # Tweak the error message of trying to compile the template so that
+  # it shows the line number and the surrounding lines of the template
+  # and generally makes it easier to debug the template.
 
-  my $code = eval $compiled;
-  die $@ if $@;
-
-
+  my $code = eval $compiled; if($@) {
+    die generate_error_message($@, $template);
+  }
 
   return $code;
 }
@@ -308,6 +315,298 @@ sub mark_unmatched_close_blocks {
 
 1;
 
+=head1 NAME
+
+Template::EmbeddedPerl - A template processing module for embedding Perl code
+
+=head1 SYNOPSIS
+
+  use Template::EmbeddedPerl;
+
+  # Create a new template object
+  my $template = Template::EmbeddedPerl->new();
+
+  # Compile a template from a string
+  my $compiled = $template->from_string('Hello, <%= shift %>!');
+
+  # execute the compiled template
+  my $output = $compiled->render('John');
+
+  # $output is:
+  Hello, John!
+
+=head1 DESCRIPTION
+
+C<Template::EmbeddedPerl> is a template engine that allows you to embed Perl code
+within template files or strings. It provides methods for creating templates
+from various sources, including strings, file handles, and data sections.
+
+The module also supports features like helper functions, custom template tags,
+automatic escaping, and customizable sandbox environments.
+
+Its quite similar to L<Mojo::Template> and other embedded Perl template engines
+but its got one trick the others can't do (see L<EXCUSE> below).
+
+=head1 ACKNOWLEDGEMENTS
+
+I looked at L<Mojo::Template> and I lifted some code and docs from there.  I also
+copied some of ther test cases.   I was shooting for something reasonable similar
+and potentially compatible with L<Mojo::Template> but with some additional features.
+L<Template::EmbeddedPerl> is similiar to how template engines in popular frameworks 
+like Ruby on Rails and also similar to EJS in the JavaScript world.  So nothing weird
+here, just something people would understand and be comfortable with.  A type of
+lowest common denominator.  If you know Perl, you will be able to use this after
+a few minutes of reading the docs (or if you've used L<Mojo::Template> or L<Mason>
+you might not even need that).
+
+=head1 EXCUSE
+
+Why create yet another one of these embedded Perl template engines?  I wanted one
+that could properly handle block capture like following:
+
+    <% my @items = map { %>
+      <p><%= $_ %></p>
+    <% } @items %>
+
+Basically none of the existing ones I could find could handle this.  If I'm wrong
+and somehow there's a flag or approach in L<Mason> or one of the other ones that
+can handle this please let me know.
+
+L<Mojo::Template> is close but you have to use C<begin> and C<end> tags to get a similar
+effect and it's not as flexible as I'd like plus I want to be able to use signatures in
+code like the following:
+
+    <%= $f->form_for($person, sub($view, $fb, $person) { %>
+      <div>
+        <%= $fb->label('first_name') %>
+        <%= $fb->input('first_name') %>
+        <%= $fb->label('last_name') %>
+        <%= $fb->input('last_name') %>
+      </div>
+    <% }) %>
+
+Again, I couldn't find anything that could do this.   Its actually tricky because of the way
+you need to localize capture of template output when inside a block.  I ended up using L<PPI>
+to parse the template so I could properly find begin and end blocks and also distinguish between
+control blocks (like C<if> an C<unless>) blocks that have a return like C<sub> or C<map> blocks.
+In L<Mojo::Template> you can do the following (its the same but not as pretty to my eye):
+
+    <% my $form = $f->form_for($person, begin %>
+      <% my ($view, $fb, $person) = @_; %>
+      <div>
+        <%= $fb->label('first_name') %>
+        <%= $fb->input('first_name') %>
+        <%= $fb->label('last_name') %>
+        <%= $fb->input('last_name') %>
+      </div>
+    <% end; %>
+
+On the other hand my system is pretty new and I'm sure there are bugs and issues I haven't
+thought of yet.  So you probably want to use one of the more mature systems like L<Mason> or
+L<Mojo::Template> unless you really need the features I've added. Or your being forced to use
+it because you're working for me ;)
+
+=head1 TEMPLATE SYNTAX
+
+The template syntax is similar to other embedded Perl template engines. You can embed Perl
+code within the template using opening and closing tags. The default tags are C<< '<%' >> and
+C<< '%>' >>, but you can customize them when creating a new template object.
+
+All templates get C<strict>, C<warnings> and C<utf8> enabled by default.
+
+  <% Perl code %>
+  <%= Perl expression, replaced with result %>
+
+You can add '=' to the closing tag to indicate that the expression should be trimmed of leading
+and trailing whitespace. This is useful when you want to include the expression in a block of text.
+
+  <% Perl code =%>
+  <%= Perl expression, replaced with result, trimmed =%>
+
+If you want to skip the newline after the closing tag you can use a backslash.
+
+  <% Perl code %>\
+  <%= Perl expression, replaced with result, trimmed %>\
+
+You probably don't care about this so much with HTML since it collapses whitespace but it can be
+useful for other types of output like plain text or if you need some embedded Perl inside
+your JavaScript.
+
+=head1 METHODS
+
+=head2 new
+
+  my $template = Template::EmbeddedPerl->new(%args);
+
+Creates a new C<Template::EmbeddedPerl> object. Accepts the following arguments:
+
+=over 4
+
+=item * C<open_tag>
+
+The opening tag for template expressions. Default is C<< '<%' >>.
+
+=item * C<close_tag>
+
+The closing tag for template expressions. Default is C<< '%>' >>.
+
+=item * C<expr_marker>
+
+The marker indicating a template expression. Default is C<< '=' >>.
+
+=item * C<sandbox_ns>
+
+The namespace for the sandbox environment. Default is C<< 'Template::YAT::Sandbox' >>.
+
+=item * C<directories>
+
+An array reference of directories to search for templates. Default is an empty array.
+A directory to search can be either a string or an array reference containing each part
+of the path to the directory.  Directories will be searched in order listed.
+
+=item * C<template_extension>
+
+The file extension for template files. Default is C<< 'yat' >>.
+
+=item * C<auto_escape>
+
+Boolean indicating whether to automatically escape content. Default is C<< 0 >>.
+You probably want this enabled for web content to prevent XSS attacks.
+
+=item * C<auto_flatten_expr>
+
+Boolean indicating whether to automatically flatten expressions. Default is C<< 1 >>.
+What this means is that if you have an expression that returns an array we will join
+the array into a string before outputting it.
+
+=back
+
+=head2 from_string
+
+  my $compiled = $template->from_string($template_string, @args);
+
+Creates a compiled template from a string. Accepts the template content as a
+string and optional arguments to modify behavior. Returns a
+C<Template::EmbeddedPerl::Compiled> object.
+
+=head2 from_file
+
+  my $compiled = $template->from_file($file_name, @args);
+
+Creates a compiled template from a file. Accepts the filename (without extension)
+and optional arguments. Searches for the file in the directories specified during
+object creation.
+
+=head2 from_fh
+
+  my $compiled = $template->from_fh($filehandle, @args);
+
+Creates a compiled template from a file handle. Reads the content from the
+provided file handle and processes it as a template.
+
+=head2 from_data
+
+  my $compiled = $template->from_data($package, @args);
+
+Creates a compiled template from the __DATA__ section of a specified package.
+Returns a compiled template object or dies if the package cannot be loaded or
+no __DATA__ section is found.
+
+=head2 trim
+
+  my $trimmed = $template->trim($string);
+
+Trims leading and trailing whitespace from the provided string. Returns the
+trimmed string.
+
+=head2 default_helpers
+
+  my %helpers = $template->default_helpers;
+
+Returns a hash of default helper functions available to the templates.
+
+=head2 get_helpers
+
+  my %helpers = $template->get_helpers($helper_name);
+
+Returns a specific helper function or all helper functions if no name is provided.
+
+=head2 parse_template
+
+  my @parsed = $template->parse_template($template);
+
+Parses the provided template content and returns an array of parsed blocks.
+
+=head2 compile
+
+  my $code = $template->compile($template, @parsed);
+
+Compiles the provided template content into executable Perl code. Returns a
+code reference.
+
+=head1 HELPER FUNCTIONS
+
+The module provides a set of default helper functions that can be used in templates.
+
+=over 4
+
+=item * C<raw>
+
+Returns a string as a safe string object without escaping.   Useful if you
+want to return actual HTML to your template but you better be 
+sure that HTML is safe.
+
+=item * C<safe>
+
+Returns a string as a safe html escaped string object that will not be 
+escaped again.
+
+=item * C<safe_concat>
+
+Like C<safe> but for multiple strings.  This will concatenate the strings into
+a single string object that will not be escaped again.
+
+=item * C<html_escape>
+
+Escapes HTML entities in a string.  This differs for C<safe> in that it will
+just do the escaping and not wrap the string in a safe string object.
+
+=item * C<url_encode>
+
+Encodes a string for use in a URL.
+
+=item * C<escape_javascript>
+
+Escapes JavaScript entities in a string. Useful for making strings safe to use
+ in JavaScript.
+
+=item * C<trim>
+
+Trims leading and trailing whitespace from a string.
+
+=back
+
+
+=head1 DEDICATION
+
+This module is dedicated to the memory of my dog Bear who passed away 17 August 2024.
+He was a good dog and I miss him.
+
+If this module is useful to you please consider donating to your local animal shelter
+or rescue organization.
+
+=head1 AUTHOR
+
+Your Name, C<< <jjnapiork@cpan.org> >>
+
+=head1 LICENSE AND COPYRIGHT
+
+This library is free software; you can redistribute it and/or modify it under the
+same terms as Perl itself.
+
+=cut
+
+
 __END__
 %= join '', map {
   <p>%= $_</p>
@@ -322,7 +621,7 @@ __END__
   foreach my $index (0..2) {
     foreach my $i2 (2..3) {
     <div>
-      %= $item.' '.$index. ' '.$i2 %%
+      %= $item.' '.$index. ' '.$i2
     </div>
   }}
   %= sub {
@@ -334,9 +633,10 @@ __END__
 
 todo
 
-1 handle errors
-2 auto escape is an option off by default
-3 docs
-4 tests
-5 tweak the syntax....?
-6 add %% and %= support for start of line
+1 docs
+2 add %% and %= support for start of line
+4 vars support for hashy render
+5 better control of first line for adding modules and pragmas
+3 tests
+4 tweak the syntax....?
+

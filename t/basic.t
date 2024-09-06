@@ -12,7 +12,11 @@ ok my %helpers = (
 );
 
 ok my $current_directory = dirname(abs_path(__FILE__));
-ok my $yat = Template::EmbeddedPerl->new(helpers=>\%helpers, directories => [[$current_directory, 'templates']]);
+ok my $yat = Template::EmbeddedPerl->new(
+  helpers=>\%helpers, 
+  auto_escape => 1, 
+  directories => [[$current_directory, 'templates']]
+);
 ok my $generator1 = $yat->from_data('Template::EmbeddedPerl::Test::Basic');
 
 ok my $out1 = $generator1->render(qw/a b c/);
@@ -29,7 +33,7 @@ done_testing;
 __DATA__
 <% my @items = @_ %>\
 <%= map { %>\
-  <p><%= $_ %></p>
+  <p><%= $_ %><%= "<hr>" %></p>
 <% } @items %>\\
 <% my $X=1; my $bb = safe_concat map { %>\
   <p><%= $_ %></p>

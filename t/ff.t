@@ -28,7 +28,7 @@ ok my $f = Valiant::HTML::Util::Form->new(view=>$yat);
 ok !$person->valid;
 
 ok my $template = join '', <DATA>;
-ok my $generator1 = $yat->from_string($template);
+ok my $generator1 = $yat->from_string($template, auto_escape => 1);
 
 ok my $out = $generator1->render($f, $person);
 
@@ -41,9 +41,9 @@ done_testing;
 
 
 __DATA__
+<% use v5.40 %>
 <% my ($f, $person) = @_ %>
-<%= $f->form_for($person, sub { %>
-  <% my ($view, $fb, $person) = @_ =%>
+<% my $form = $f->form_for($person, sub($view, $fb, $person) { %>
   <div>
     <%= $fb->label('first_name') %>
     <%= $fb->input('first_name') %>
@@ -51,3 +51,5 @@ __DATA__
     <%= $fb->input('last_name') %>
   </div>
 <% }) %>
+And now for the form:
+<%= $form %>
