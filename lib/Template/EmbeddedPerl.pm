@@ -26,8 +26,8 @@ sub trim {
 }
 
 sub new {
-  my ($class, %args) = (
-    shift,
+  my $class = shift;
+  my (%args) = (
     open_tag => '<%',
     close_tag => '%>',
     expr_marker => '=',
@@ -36,8 +36,10 @@ sub new {
     template_extension => 'yat',
     auto_escape => 0,
     auto_flatten_expr => 1,
+    prepend => '',
     @_,
   );
+
   my $self = bless \%args, $class;
 
   $self->inject_helpers;
@@ -79,14 +81,15 @@ sub default_helpers {
 # Create a new template document in various ways
 
 sub from_string {
-  my ($proto, $template, @args) = @_;
-  my $self = ref($proto) ? $proto : $proto->new(@args);
+  my ($proto, $template, %args) = @_;
+  my $source = delete($args{source});
+  my $self = ref($proto) ? $proto : $proto->new(%args);
 
   $template = normalize_linefeeds($template); ## TODO: think about this, maybe =]] instead
 
   my @template = split(/\n/, $template);
   my @parsed = $self->parse_template($template);
-  my $code = $self->compile(\@template, @parsed);
+  my $code = $self->compile(\@template, $source, @parsed);
 
   $self->{template} = \@template;
   $self->{parsed} = \@parsed;
@@ -97,6 +100,7 @@ sub from_string {
     parsed => \@parsed,
     code => $code,
     yat => $self,
+    source => $source,
   }, 'Template::EmbeddedPerl::Compiled'; 
 }
 
@@ -110,7 +114,10 @@ sub from_data {
   my $data_handle = do { no strict 'refs'; *{"${package}::DATA"}{IO} };
   if (defined $data_handle) {
     my $data_content = do { local $/; <$data_handle> };
-    return $proto->from_string($data_content, @args);
+    my $package_file = $package;
+    $package_file =~ s/::/\//g;
+    my $path = $INC{"${package_file}.pm"};
+    return $proto->from_string($data_content, @args, source => $path);
   } else {
     print "No __DATA__ section found in package $package.\n";
   }
@@ -135,7 +142,8 @@ sub from_file {
     my $path = File::Spec->catfile($dir, $file);
     if (-e $path) {
       open my $fh, '<', $path or die "Failed to open file $path: $!";
-      return $self->from_fh($fh);
+      my %args = (@args, source => $path);
+      return $self->from_fh($fh, %args);
     }
   }
   die "File $file not found in directories: @{[ join ', ', @{ $proto->{directories} } ]}";
@@ -178,7 +186,7 @@ sub parse_template {
 }
 
 sub compile {
-  my ($self, $template, @parsed) = @_;
+  my ($self, $template, $source, @parsed) = @_;
 
   my $compiled = '';
   my $safe_or_not = $self->{auto_escape} ? ' safe ' : '';
@@ -201,15 +209,17 @@ sub compile {
     }
   }
 
-  $compiled = "use strict; use warnings; sub { my \$_O = ''; $compiled; return \$_O; }";
+  $compiled = "use strict; use warnings; use utf8; @{[ $self->{prepend} ]}; sub { my \$_O = ''; $compiled; return \$_O; }";
   $compiled = "package @{[ $self->{sandbox_ns} ]}; $compiled";
 
   # Tweak the error message of trying to compile the template so that
   # it shows the line number and the surrounding lines of the template
   # and generally makes it easier to debug the template.
 
+  print "Compiled: $compiled\n" if $ENV{DEBUG_TEMPLATE_EMBEDDED_PERL};
+
   my $code = eval $compiled; if($@) {
-    die generate_error_message($@, $template);
+    die generate_error_message($@, $template, $source);
   }
 
   return $code;
@@ -412,7 +422,11 @@ The template syntax is similar to other embedded Perl template engines. You can 
 code within the template using opening and closing tags. The default tags are C<< '<%' >> and
 C<< '%>' >>, but you can customize them when creating a new template object.
 
-All templates get C<strict>, C<warnings> and C<utf8> enabled by default.
+All templates get C<strict>, C<warnings> and C<utf8> enabled by default.  Please note this
+is different than L<Mojo::Template> which does not seem to have warnings enabled by default.
+Since I like very strict templates this default makes sense to me but if you tend to play
+fast and loose with your templates (for example you don't use C<my> to declare variables) you
+might not like this.  Feel free to complain to me, I might change it.
 
   <% Perl code %>
   <%= Perl expression, replaced with result %>
@@ -479,19 +493,28 @@ Boolean indicating whether to automatically flatten expressions. Default is C<< 
 What this means is that if you have an expression that returns an array we will join
 the array into a string before outputting it.
 
+=item * C<prepend>
+
+Perl code to prepend to the compiled template. Default is an empty string. For example
+you can enable modern Perl features like signatures by setting this to C<< 'use v5.40;' >>.
+
+
 =back
 
 =head2 from_string
 
-  my $compiled = $template->from_string($template_string, @args);
+  my $compiled = $template->from_string($template_string, %args);
 
 Creates a compiled template from a string. Accepts the template content as a
 string and optional arguments to modify behavior. Returns a
 C<Template::EmbeddedPerl::Compiled> object.
 
+pass 'source => $path' to the arguments to specify the source of the template if you
+want neater error messages.
+
 =head2 from_file
 
-  my $compiled = $template->from_file($file_name, @args);
+  my $compiled = $template->from_file($file_name, %args);
 
 Creates a compiled template from a file. Accepts the filename (without extension)
 and optional arguments. Searches for the file in the directories specified during
@@ -499,14 +522,17 @@ object creation.
 
 =head2 from_fh
 
-  my $compiled = $template->from_fh($filehandle, @args);
+  my $compiled = $template->from_fh($filehandle, %args);
 
 Creates a compiled template from a file handle. Reads the content from the
 provided file handle and processes it as a template.
 
+pass 'source => $path' to the arguments to specify the source of the template if you
+want neater error messages.
+
 =head2 from_data
 
-  my $compiled = $template->from_data($package, @args);
+  my $compiled = $template->from_data($package, %args);
 
 Creates a compiled template from the __DATA__ section of a specified package.
 Returns a compiled template object or dies if the package cannot be loaded or

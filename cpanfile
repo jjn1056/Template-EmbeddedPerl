@@ -8,4 +8,6 @@ requires 'URI::Escape';
 
 on test => sub {
   requires 'Test::Most' => '0.34';
+  requires 'Cwd';
+  requires 'File::Basename';
 };

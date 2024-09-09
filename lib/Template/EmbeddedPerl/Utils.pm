@@ -54,20 +54,32 @@ sub escape_javascript {
 }
 
 sub generate_error_message {
-  my ($msg, $template) = @_;
+  my ($msg, $template, $source) = @_;
 
-  return $msg unless $msg =~ m/\(.+?\)/;
-  $msg =~ m/.*?line\s+(\d+).*/; my $line = $1; $line--;# Because zero index
-  $msg =~ s/\(.*?\) //g;
-  $msg.= "\n";
+  $source = $source ? "$source" : 'unknown';
 
-  my $start = $line -1 > 0 ? $line -1 : 0;
-  my $end = $line + 1 < scalar(@$template) ? $line + 1 : scalar(@$template) - 1;
-  for my $i ($start..$end) {
-    $msg .= "@{[ $i+1 ]}: $template->[$i]\n";
+  my @files;
+  push @files, [$1, $2, $3, $msg] while $msg =~ /^(.+?) at\s+(.+?)\s+line\s+(\d+)/gm;
+
+  my $text = '';
+  foreach my $file (@files) {
+    my ($msg, $file, $line, $extra) = @$file; 
+    if($file !~ m/eval/) {
+      $text .= $extra;
+      next;
+    }
+    $text .= "$msg at $source line $line\n\n";
+
+    $line--;
+    my $start = $line -1 >= 0 ? $line -1 : 0;
+    my $end = $line + 1 < scalar(@$template) ? $line + 1 : scalar(@$template) - 1;
+    for my $i ($start..$end) {
+      $text .= "@{[ $i+1 ]}: $template->[$i]\n";
+    }
+    $text .= "\n";
   }
 
-  return "$msg\n";
+  return "$text\n";
 }
 
 1;

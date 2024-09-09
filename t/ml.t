@@ -74,7 +74,10 @@ done_testing;
 
 __DATA__
 <% my $de =1;
+use strict;
+use warnings;
  my $g = 1; %>
+<%= sub($a) { return $a; }->(1) %>
 <p><%= $items %></p>
 <% if(1) { %>
   <span>One: <%= 'gg' %></span>
