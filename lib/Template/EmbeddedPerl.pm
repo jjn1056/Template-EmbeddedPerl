@@ -870,6 +870,13 @@ access code and you might run into bugs.
 
 =back
 
+=head1 REPORTING BUGS & GETTING HELP
+
+If you find a bug, please report it on the GitHub issue tracker at
+L<https://github.com/jjn1056/Template-EmbeddedPerl/issues>.  The bug tracker is
+the easiest way to get help with this module from me but I'm also on irc.perl.org
+under C<jnap>.
+
 =head1 DEDICATION
 
 This module is dedicated to the memory of my dog Bear who passed away on 17 August 2024.
