@@ -56,6 +56,8 @@ sub escape_javascript {
 sub generate_error_message {
   my ($msg, $template, $source) = @_;
 
+  warn "RAW MESSAGE: [$msg]" if $ENV{DEBUG_TEMPLATE_EMBEDDED_PERL};
+
   $source = $source ? "$source" : 'unknown';
 
   my @files;
@@ -83,3 +85,52 @@ sub generate_error_message {
 }
 
 1;
+
+
+=head1 NAME
+
+Template::EmbeddedPerl::Utils - Utility functions for Template::EmbeddedPerl
+
+=head1 DESCRIPTION
+
+This module provides utility functions for L<Template::EmbeddedPerl>. It is not intended to be used directly.
+
+=head1 EXPORTS
+
+=head2 normalize_linefeeds
+
+  my $normalized = normalize_linefeeds($template);
+
+Normalize the line endings to \n from mac and windows format.
+
+=head2 uri_escape
+
+  my $escaped = uri_escape($string);
+
+Escape the uri string.
+
+=head2 escape_javascript
+
+  my $escaped = escape_javascript($javascript);
+
+Escape the javascript string.
+
+=head2 generate_error_message
+
+  my $error_message = generate_error_message($msg, $template, $source);
+
+Generate an error message.
+
+=head1 SEE ALSO
+  
+L<Template::EmbeddedPerl>
+
+=head1 AUTHOR
+  
+See L<Template::EmbeddedPerl>
+ 
+=head1 COPYRIGHT & LICENSE
+  
+See L<Template::EmbeddedPerl>
+ 
+=cut

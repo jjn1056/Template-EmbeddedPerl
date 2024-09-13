@@ -3,11 +3,12 @@ requires 'PathTools';
 requires 'Exporter';
 requires 'HTML::Escape';
 requires 'Scalar::Util';
-requires 'Carp';
 requires 'URI::Escape';
+requires 'Carp';
+requires 'Digest::MD5';
 
 on test => sub {
   requires 'Test::Most' => '0.34';
   requires 'Cwd';
-  requires 'File::Basename';
+  requires 'PathTools';
 };

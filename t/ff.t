@@ -1,13 +1,16 @@
 package Template::EmbeddedPerl::Test::FF;
 $INC{'Template/EmbeddedPerl/Test/FF.pm'} = __FILE__;
 
-use Template::EmbeddedPerl;
-use Valiant::HTML::Util::View;
-use Valiant::HTML::Util::Form;
-use Test::Most;
-use Cwd 'abs_path';
-use File::Basename;
-use File::Spec;
+## skip if Valiant isn't available
+
+BEGIN {
+  use Test::Most;
+  eval "
+    use Valiant::HTML::Util::View;
+    use Valiant::HTML::Util::Form;
+  ";
+  plan skip_all => 'Valiant required for these tests' if $@;
+}
 
 {
   package Local::Person;
@@ -27,34 +30,63 @@ use File::Spec;
   );
 }
 
-ok my $current_directory = dirname(abs_path(__FILE__));
+use Template::EmbeddedPerl;
+use File::Spec;
+
 ok my $yat = Template::EmbeddedPerl->new(
   auto_escape => 1,
-  directories => [[$current_directory, 'templates']],
+  directories => [[Template::EmbeddedPerl->directory_for_package('Template::EmbeddedPerl::Test::FF'), 'templates']],
   prepend => 'use v5.40;use strictures 2;');
 
 ok my $f = Valiant::HTML::Util::Form->new(view=>$yat);
 ok my $person = Local::Person->new(first_name => 'aa', last_name => 'napiorkowski');
 
-#ok my $template = join '', <DATA>;
-#ok my $generator1 = $yat->from_string($template);
-#ok my $generator1 = $yat->from_file('ff');
-ok my $generator1 = $yat->from_data(__PACKAGE__);
+my $generated = '
+<form accept-charset="UTF-8" class="new_local_person" enctype="application/x-www-form-urlencoded" id="new_local_person" method="post">
+  <div>
+    <label for="local_person_first_name">First Name</label>
+    <input id="local_person_first_name" name="local_person.first_name" type="text" value="aa"/>
+    <label for="local_person_last_name">Last Name</label>
+    <input id="local_person_last_name" name="local_person.last_name" type="text" value="napiorkowski"/>
+  </div>
+</form>';
 
-#open(my $fh, '<', File::Spec->catfile($current_directory, 'templates','ff.yat')) || die "trouble opening file: $@";
-#ok my $generator1 = $yat->from_fh($fh, source=>'ff.yat');
-#close($fh);
+{
+  my $position = tell( DATA );
+  ok my $template = join '', <DATA>;
+  seek DATA, $position, 0;
+  ok my $generator1 = $yat->from_string($template);
+  ok my $out = $generator1->render($f, $person);
+  is $out, $generated, 'rendered template';
+}
 
+{
+  ok my $generator1 = $yat->from_file('ff');
+  ok my $out = $generator1->render($f, $person);
+  is $out, $generated, 'rendered template';
+}
 
-ok my $out = $generator1->render($f, $person);
+{
+  ok my $generator1 = $yat->from_data(__PACKAGE__);
+  ok my $out = $generator1->render($f, $person);
+  is $out, $generated, 'rendered template';
+}
 
-warn "...$out...";
+{
+  my @path = (
+    Template::EmbeddedPerl->directory_for_package('Template::EmbeddedPerl::Test::FF'),
+    'templates',
+    'ff.yat');
 
+  open my $fh , '<', File::Spec->catfile(@path);
+
+  ok my $generator1 = $yat->from_fh($fh);
+  ok my $out = $generator1->render($f, $person);
+  is $out, $generated, 'rendered template';
+}
 
 
 done_testing;
-
-
 
 __DATA__
 <% my ($f, $person) = @_ %>

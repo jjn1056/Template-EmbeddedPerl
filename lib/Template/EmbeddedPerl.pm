@@ -6,6 +6,7 @@ use strict;
 use PPI::Document;
 use Module::Runtime;
 use File::Spec;
+use Digest::MD5;
 use Template::EmbeddedPerl::Compiled;
 use Template::EmbeddedPerl::Utils qw(normalize_linefeeds generate_error_message);
 use Template::EmbeddedPerl::SafeString;
@@ -25,20 +26,39 @@ sub trim {
   return $string;
 }
 
+sub directory_for_package {
+  my $self = shift;
+  my $class = ref($self) || $self;
+  my $package = @_ ? shift(@_) : $class;
+ 
+  $package =~ s/::/\//g;
+  my $path = $INC{"${package}.pm"};
+  my ($volume,$directories,$file) = File::Spec->splitpath( $path );
+
+  return $directories;
+}
+
+
+
 sub new {
   my $class = shift;
   my (%args) = (
     open_tag => '<%',
     close_tag => '%>',
     expr_marker => '=',
+    line_start => '%',
     sandbox_ns => 'Template::YAT::Sandbox',
     directories => [],
     template_extension => 'yat',
     auto_escape => 0,
     auto_flatten_expr => 1,
     prepend => '',
+    use_cache => 0,
+    vars => 0,
     @_,
   );
+
+  %args = (%args, $class->config,) if $class->can('config');
 
   my $self = bless \%args, $class;
 
@@ -50,6 +70,11 @@ sub inject_helpers {
   my ($self) = @_;
   my %helpers = $self->get_helpers;
   foreach my $helper(keys %helpers) {
+    if($self->{sandbox_ns}->can($helper)) {
+      warn "Skipping injection of helper '$helper'; already exists in namespace $self->{sandbox_ns}" 
+        if $ENV{DEBUG_TEMPLATE_EMBEDDED_PERL};
+      next;
+    }
     eval qq[
       package @{[ $self->{sandbox_ns} ]};
       sub $helper { \$self->get_helpers('$helper')->(\$self, \@_) }
@@ -60,6 +85,8 @@ sub inject_helpers {
 sub get_helpers {
   my ($self, $helper) = @_;
   my %helpers = ($self->default_helpers, %{ $self->{helpers} || +{} });
+
+  %helpers = (%helpers, $self->helpers) if $self->can('helpers');
  
   return $helpers{$helper} if defined $helper;
   return %helpers;
@@ -71,7 +98,7 @@ sub default_helpers {
     raw               => sub { my ($self, @args) = @_; return $self->raw(@args); },
     safe              => sub { my ($self, @args) = @_; return $self->safe(@args); },
     safe_concat       => sub { my ($self, @args) = @_; return $self->safe_concat(@args); },
-    html_escape       => sub { my ($self, @args) = @_; return $self->rhtml_escape(@args); },
+    html_escape       => sub { my ($self, @args) = @_; return $self->html_escape(@args); },
     url_encode        => sub { my ($self, @args) = @_; return $self->url_encode(@args); },
     escape_javascript => sub { my ($self, @args) = @_; return $self->escape_javascript(@args); },
     trim             => sub { my ($self, $arg) = @_; return $self->trim($arg); },
@@ -85,15 +112,34 @@ sub from_string {
   my $source = delete($args{source});
   my $self = ref($proto) ? $proto : $proto->new(%args);
 
-  $template = normalize_linefeeds($template); ## TODO: think about this, maybe =]] instead
+  my $digest;
+  if($self->{use_cache}) {
+    $digest = Digest::MD5::md5_hex($template);
+    if(my $cached = $self->{compiled_cache}->{$digest}) {
+      return $self->{compiled_cache}->{$digest};
+      return bless {
+        template => $cached->{template},
+        parsed => $cached->{parsed},
+        code => $cached->{code},
+        yat => $self,
+        source => $source,
+      }, 'Template::EmbeddedPerl::Compiled';     
+    }  
+  }
+
+  $template = normalize_linefeeds($template);
 
   my @template = split(/\n/, $template);
   my @parsed = $self->parse_template($template);
   my $code = $self->compile(\@template, $source, @parsed);
 
-  $self->{template} = \@template;
-  $self->{parsed} = \@parsed;
-  $self->{code} = $code;
+  if($self->{use_cache}) {
+    $self->{compiled_cache}->{$digest} = {
+      template => \@template,
+      parsed => \@parsed,
+      code => $code,
+    };
+  }
 
   return bless {
     template => \@template,
@@ -113,11 +159,13 @@ sub from_data {
 
   my $data_handle = do { no strict 'refs'; *{"${package}::DATA"}{IO} };
   if (defined $data_handle) {
+    #my $position = tell( $data_handle );
     my $data_content = do { local $/; <$data_handle> };
+    #seek $data_handle, $position, 0;
     my $package_file = $package;
     $package_file =~ s/::/\//g;
     my $path = $INC{"${package_file}.pm"};
-    return $proto->from_string($data_content, @args, source => $path);
+    return $proto->from_string($data_content, @args, source => "${path}/DATA");
   } else {
     print "No __DATA__ section found in package $package.\n";
   }
@@ -156,8 +204,19 @@ sub parse_template {
   my $open_tag = $self->{open_tag};
   my $close_tag = $self->{close_tag};
   my $expr_marker = $self->{expr_marker};
+  my $line_start = $self->{line_start};
 
+  ## support shorthand line start tags ##
 
+  # Convert all lines starting with %% to start with <% and then add %> to the end
+  $template =~ s/^\s*${line_start}(.*)$/${open_tag}$1${close_tag}/mg;
+  # Convert all lines starting with %= to start with <%= and then add %> to the end 
+  $template =~ s/^\s*${line_start}${expr_marker}(.*)$/${open_tag}${expr_marker}$1${close_tag}/mg;
+  # Convert all lines starting with \%% to start instead with %%
+  $template =~ s/^\s*\\${line_start}${line_start}(.*)$/${line_start}${line_start}$1/mg;
+  # Convert all lines starting with \%= to start instead with %=
+  $template =~ s/^\s*\\${line_start}${expr_marker}(.*)$/${line_start}${expr_marker}$1/mg;
+  
   # This code parses the template and returns an array of parsed blocks.
   # Each block is represented as an array reference with two elements: the type and the content.
   # The type can be 'expr' for expressions enclosed in double square brackets,
@@ -165,15 +224,28 @@ sub parse_template {
   # or 'text' for plain text blocks.
   # The content is the actual content of the block, trimmed of leading and trailing whitespace.
 
-  my @segments = split /(\Q${open_tag}\E.*?\Q${close_tag}\E)/s, $template;
+  #my @segments = split /(\Q${open_tag}\E.*?\Q${close_tag}\E)/s, $template;
+  my @segments = split /((?<!\\)\Q${open_tag}\E.*?(?<!\\)\Q${close_tag}\E)/s, $template;
   my @parsed = ();
   foreach my $segment (@segments) {
     my ($open_type, $content, $close_type) = ($segment =~ /^(\Q${open_tag}${expr_marker}\E|\Q$open_tag\E)(.*?)(\Q${expr_marker}${close_tag}\E|\Q$close_tag\E)?$/s);
 
     if(!$open_type) {
+      # Remove \ from escaped line_start, open_tag, and close_tag
+      $segment =~ s/\\${line_start}/${line_start}/g;
+      $segment =~ s/\\${open_tag}/${open_tag}/g;
+      $segment =~ s/\\${close_tag}/${close_tag}/g;
+       $segment =~ s/\\${expr_marker}${close_tag}/${expr_marker}${close_tag}/g;
+
       push @parsed, ['text', $segment];
     } else {
       $parsed[-1][1] =~s/[ \t]+$//mg if $close_type eq "${expr_marker}${close_tag}";
+      # Remove \ from escaped line_start, open_tag, and close_tag
+      $content =~ s/\\${line_start}/${line_start}/g;
+      $content =~ s/\\${open_tag}/${open_tag}/g;
+      $content =~ s/\\${close_tag}/${close_tag}/g;
+      $content =~ s/\\${expr_marker}${close_tag}/${expr_marker}${close_tag}/g;
+
       if ($open_type eq "${open_tag}${expr_marker}") {
         push @parsed, ['expr', tokenize($content)];
       } elsif ($open_type eq $open_tag) {
@@ -202,23 +274,25 @@ sub compile {
       $compiled .= $content . ";";
     } else {
       # if \\n is present in the content, replace it with ''
-      my $escaped_newline = $content =~ s/^\\\n//;
+      my $escaped_newline_start = $content =~ s/^\\\n//;
+      my $escaped_newline_end = $content =~ s/\\\n$//;
+
       $content =~ s/^\\\\/\\/;   
-      $compiled .= "\$_O .= \"" . quotemeta($content) . "\";";
-      $compiled .= "\n" if $escaped_newline;
+      $compiled .= "@{[$escaped_newline_start ? qq[\n]:'' ]} \$_O .= \"" . quotemeta($content) . "\";@{[$escaped_newline_end ? qq[\n]:'' ]}";
     }
   }
 
-  $compiled = "use strict; use warnings; use utf8; @{[ $self->{prepend} ]}; sub { my \$_O = ''; $compiled; return \$_O; }";
-  $compiled = "package @{[ $self->{sandbox_ns} ]}; $compiled";
+  my $wrapper = "package @{[ $self->{sandbox_ns} ]}; ";
+  $wrapper .= "use strict; use warnings; use utf8; @{[ $self->{prepend} ]}; ";
+  $wrapper .= "sub { my \$_O = ''; $compiled; return \$_O; };";
 
   # Tweak the error message of trying to compile the template so that
   # it shows the line number and the surrounding lines of the template
   # and generally makes it easier to debug the template.
 
-  print "Compiled: $compiled\n" if $ENV{DEBUG_TEMPLATE_EMBEDDED_PERL};
+  warn "Compiled: $wrapper\n" if $ENV{DEBUG_TEMPLATE_EMBEDDED_PERL};
 
-  my $code = eval $compiled; if($@) {
+  my $code = eval $wrapper; if($@) {
     die generate_error_message($@, $template, $source);
   }
 
@@ -323,6 +397,12 @@ sub mark_unmatched_close_blocks {
   return 1;
 }
 
+sub render {
+  my ($self, $template, @args) = @_;
+  my $compiled = $self->from_string($template);
+  return $compiled->render(@args);
+}
+
 1;
 
 =head1 NAME
@@ -333,17 +413,35 @@ Template::EmbeddedPerl - A template processing module for embedding Perl code
 
   use Template::EmbeddedPerl;
 
-  # Create a new template object
+Create a new template object
+
   my $template = Template::EmbeddedPerl->new();
 
-  # Compile a template from a string
+Compile a template from a string
+
   my $compiled = $template->from_string('Hello, <%= shift %>!');
 
-  # execute the compiled template
+execute the compiled template
+
   my $output = $compiled->render('John');
 
-  # $output is:
+C<$output> is:
+
   Hello, John!
+
+You can also use class methods to create compiled templates
+in one step if you don't need the reusable template object
+
+  my $compiled = Template::EmbeddedPerl->from_string('Hello, <%= shift %>!');
+  my $output = $compiled->render('John');
+
+Or you can render templates from strings directly:
+
+  my $template = Template::EmbeddedPerl->new(use_cache => 1); # cache compiled templates
+  my $output = $template->render('Hello, <%= shift %>!', 'John');
+
+Other class methods are available to create compiled templates from files, file handles, 
+and data sections.  See the rest of the docs for more information.
 
 =head1 DESCRIPTION
 
@@ -351,16 +449,23 @@ C<Template::EmbeddedPerl> is a template engine that allows you to embed Perl cod
 within template files or strings. It provides methods for creating templates
 from various sources, including strings, file handles, and data sections.
 
-The module also supports features like helper functions, custom template tags,
-automatic escaping, and customizable sandbox environments.
+The module also supports features like helper functions, automatic escaping, 
+and customizable sandbox environments.
 
 Its quite similar to L<Mojo::Template> and other embedded Perl template engines
 but its got one trick the others can't do (see L<EXCUSE> below).
 
+B<NOTE>: This is a very basic template engine, which doesn't have lots of things
+you probably need like template includes / partials and so forth.  That's by
+design since I plan to wrap this in a L<Catalyst> view which will provide
+all those features.  If you want to use this stand alone you might need to add
+those features yourself (or ideally put something on CPAN that wraps this to 
+provide those features).  Or you can pay me to do it for you ;)
+
 =head1 ACKNOWLEDGEMENTS
 
 I looked at L<Mojo::Template> and I lifted some code and docs from there.  I also
-copied some of ther test cases.   I was shooting for something reasonable similar
+copied some of their test cases.   I was shooting for something reasonable similar
 and potentially compatible with L<Mojo::Template> but with some additional features.
 L<Template::EmbeddedPerl> is similiar to how template engines in popular frameworks 
 like Ruby on Rails and also similar to EJS in the JavaScript world.  So nothing weird
@@ -420,7 +525,8 @@ it because you're working for me ;)
 
 The template syntax is similar to other embedded Perl template engines. You can embed Perl
 code within the template using opening and closing tags. The default tags are C<< '<%' >> and
-C<< '%>' >>, but you can customize them when creating a new template object.
+C<< '%>' >>, but you can customize them when creating a new template object.  You should pick
+open and closing tags that are not common in your template content.
 
 All templates get C<strict>, C<warnings> and C<utf8> enabled by default.  Please note this
 is different than L<Mojo::Template> which does not seem to have warnings enabled by default.
@@ -431,8 +537,31 @@ might not like this.  Feel free to complain to me, I might change it.
   <% Perl code %>
   <%= Perl expression, replaced with result %>
 
+Examples:
+
+  <% my @items = qw(foo bar baz) %>
+  <% foreach my $item (@items) { %>
+    <p><%= $item %></p>
+  <% } %>
+
+Would output:
+
+  <p>foo</p>
+  <p>bar</p>
+  <p>baz</p>
+
+You can also use the 'line' version of the tags to make it easier to embed Perl code, or at
+least potentially easier to read.  For example:
+
+% my @items = qw(foo bar baz)
+% foreach my $item (@items) {
+    <p><%= $item %></p>
+% }
+
+
 You can add '=' to the closing tag to indicate that the expression should be trimmed of leading
 and trailing whitespace. This is useful when you want to include the expression in a block of text.
+where you don't want the whitespace to affect the output.
 
   <% Perl code =%>
   <%= Perl expression, replaced with result, trimmed =%>
@@ -446,6 +575,18 @@ You probably don't care about this so much with HTML since it collapses whitespa
 useful for other types of output like plain text or if you need some embedded Perl inside
 your JavaScript.
 
+If you really need that backslash in your output you can escape it with another backslash.
+
+  <%= "This is a backslash: " %>\\
+
+If you really need to use the actual tags in your output you can escape them with a backslash.
+
+  \<%       => <%
+  \<%=      => <%=
+  \%>       => %>
+  \%=       => %=
+  \%        => %
+
 =head1 METHODS
 
 =head2 new
@@ -458,7 +599,8 @@ Creates a new C<Template::EmbeddedPerl> object. Accepts the following arguments:
 
 =item * C<open_tag>
 
-The opening tag for template expressions. Default is C<< '<%' >>.
+The opening tag for template expressions. Default is C<< '<%' >>. You should use
+something that's not common in your template content.
 
 =item * C<close_tag>
 
@@ -471,6 +613,9 @@ The marker indicating a template expression. Default is C<< '=' >>.
 =item * C<sandbox_ns>
 
 The namespace for the sandbox environment. Default is C<< 'Template::YAT::Sandbox' >>.
+Basically the template is compiled into an anponymous subroutine and this is the namespace
+that subroutine is executed in.  This is a security feature to prevent the template from
+accessing the outside environment.
 
 =item * C<directories>
 
@@ -478,26 +623,84 @@ An array reference of directories to search for templates. Default is an empty a
 A directory to search can be either a string or an array reference containing each part
 of the path to the directory.  Directories will be searched in order listed.
 
+  my $template = Template::EmbeddedPerl->new(directories=>['/path/to/templates']);
+  my $template = Template::EmbeddedPerl->new(directories=>[['/path', 'to', 'templates']]);
+
+I don't do anything smart to make sure you don't reference templates in dangerous places.
+So be careful to make sure you don't let application users specify the template path.
+
 =item * C<template_extension>
 
-The file extension for template files. Default is C<< 'yat' >>.
+The file extension for template files. Default is C<< 'yat' >>. So for example:
+
+  my $template = Template::EmbeddedPerl->new(directories=>['/path/to/templates']);
+  my $compiled = $template->from_file('hello');
+
+Would look for a file named C<hello.yat> in the directories specified.
 
 =item * C<auto_escape>
 
 Boolean indicating whether to automatically escape content. Default is C<< 0 >>.
-You probably want this enabled for web content to prevent XSS attacks.
+You probably want this enabled for web content to prevent XSS attacks.  If you have this
+on and want to return actual HTML you can use the C<raw> helper function. Example:
+  
+    <%= raw '<a href="http://example.com">Example</a>' %>
+
+Obviously you need to be careful with this.
 
 =item * C<auto_flatten_expr>
 
 Boolean indicating whether to automatically flatten expressions. Default is C<< 1 >>.
 What this means is that if you have an expression that returns an array we will join
-the array into a string before outputting it.
+the array into a string before outputting it.  Example:
+
+    <% my @items = qw(foo bar baz); %>
+    <%= join ' ', @items %>
+
+Would output:
+
+    foo bar baz
 
 =item * C<prepend>
 
 Perl code to prepend to the compiled template. Default is an empty string. For example
 you can enable modern Perl features like signatures by setting this to C<< 'use v5.40;' >>.
 
+Use this to setup any pragmas or modules you need to use in your template code.
+
+=item * C<helpers>
+
+A hash reference of helper functions available to the templates. Default is an empty hash.
+You can add your own helper functions to this hash and they will be available to the templates.
+Example:
+
+  my $template = Template::EmbeddedPerl->new(helpers => {
+    my_helper => sub { return 'Hello, World!' },
+  });
+
+=item * C<use_cache>
+
+Boolean indicating whether to cache compiled templates. Default is C<< 0 >>.
+If you set this to C<< 1 >>, the module will cache compiled templates in memory. This is
+only useful if you are throwing away the template object after compiling a template.
+For example:
+
+  my $ep = Template::EmbeddedPerl->new(use_cache => 1);
+  my $output = $ep->render('Hello, <%= shift %>!', 'John');
+
+In the case above since you are not capturing the compiled template object each time
+you call C<render> you are recompiling the template. which could get expensive.
+
+On the other hand if you are keeping the template object around and reusing it you don't
+need to enable this.  Example
+
+  my $ep = Template::EmbeddedPerl->new(use_cache => 1);
+  my $compiled = $ep->from_string('Hello, <%= shift %>!');
+  my $output = $compiled->render('John');
+
+In the valid above the compiled template is cached and reused each time you call C<render>.
+
+Obviously this only works usefully in a persistent environment like mod_perl or a PSGI server.
 
 =back
 
@@ -511,6 +714,13 @@ C<Template::EmbeddedPerl::Compiled> object.
 
 pass 'source => $path' to the arguments to specify the source of the template if you
 want neater error messages.
+
+This can be called as a class method as well::
+
+  my $compiled = Template::EmbeddedPerl->from_string($template_string, %args);
+
+Useful if you don't need to keep the template object around.  This works 
+for all the other methods as well (C<from_file>, C<from_fh>, C<from_data>).
 
 =head2 from_file
 
@@ -570,6 +780,21 @@ Parses the provided template content and returns an array of parsed blocks.
 Compiles the provided template content into executable Perl code. Returns a
 code reference.
 
+=head2 directory_for_package
+
+  my $directory = $template->directory_for_package($package);
+
+Returns the directory containing the package file.
+If you don't provide a package name it will use the current package for C<$template>.
+
+Useful if you want to load templates from the same directory as your package.
+
+=head2 render
+
+  my $output = $template->render($template, @args);
+
+Compiles and executes the provided template content with the given arguments.
+
 =head1 HELPER FUNCTIONS
 
 The module provides a set of default helper functions that can be used in templates.
@@ -612,18 +837,44 @@ Trims leading and trailing whitespace from a string.
 
 =back
 
+=head1 ERROR HANDLING
+
+If an error occurs during template compilation or rendering, the module will
+throw an exception with a detailed error message. The error message includes
+the source of the template, the line number, and the surrounding lines of the
+template to help with debugging.  Example:
+
+Can't locate object method "input" at /path/to/templates/hello.yat line 4.
+
+  3:     <%= label('first_name') %>
+  4:     <%= input('first_name') %>
+  5:     <%= errors('last_name') %>
+
+=head1 ENVIRONMENT VARIABLES
+
+The module respects the following environment variables: 
+
+=over 4
+
+=item * C<DEBUG_TEMPLATE_EMBEDDED_PERL>
+
+Set this to a true value to print the compiled template code to the console. Useful
+when trying to debug difficult compilation issues, especially given this is early
+access code and you might run into bugs.
+
+=back
 
 =head1 DEDICATION
 
-This module is dedicated to the memory of my dog Bear who passed away 17 August 2024.
-He was a good dog and I miss him.
+This module is dedicated to the memory of my dog Bear who passed away on 17 August 2024.
+He was a good companion and I miss him.
 
 If this module is useful to you please consider donating to your local animal shelter
 or rescue organization.
 
 =head1 AUTHOR
 
-Your Name, C<< <jjnapiork@cpan.org> >>
+John Napiorkowski, C<< <jjnapiork@cpan.org> >>
 
 =head1 LICENSE AND COPYRIGHT
 
@@ -634,6 +885,7 @@ same terms as Perl itself.
 
 
 __END__
+
 %= join '', map {
   <p>%= $_</p>
 } @items;
@@ -659,10 +911,6 @@ __END__
 
 todo
 
-1 docs
-2 add %% and %= support for start of line
-4 vars support for hashy render
-5 better control of first line for adding modules and pragmas
-3 tests
-4 tweak the syntax....?
+1 vars support for hashy render
+2 tests
 
