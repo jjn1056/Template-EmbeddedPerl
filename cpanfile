@@ -9,6 +9,5 @@ requires 'Digest::MD5';
 
 on test => sub {
   requires 'Test::Most' => '0.34';
-  requires 'Cwd';
   requires 'PathTools';
 };

@@ -1,10 +1,12 @@
 package Template::EmbeddedPerl;
 
+our $VERSION = '0.001001';
+$VERSION = eval $VERSION;
+
 use warnings;
 use strict;
 
 use PPI::Document;
-use Module::Runtime;
 use File::Spec;
 use Digest::MD5;
 use Template::EmbeddedPerl::Compiled;
@@ -38,8 +40,6 @@ sub directory_for_package {
   return $directories;
 }
 
-
-
 sub new {
   my $class = shift;
   my (%args) = (
@@ -47,9 +47,9 @@ sub new {
     close_tag => '%>',
     expr_marker => '=',
     line_start => '%',
-    sandbox_ns => 'Template::YAT::Sandbox',
+    sandbox_ns => 'Template::EmbeddedPerl::Sandbox',
     directories => [],
-    template_extension => 'yat',
+    template_extension => 'epl',
     auto_escape => 0,
     auto_flatten_expr => 1,
     prepend => '',
@@ -154,7 +154,7 @@ sub from_data {
   my ($proto, $package, @args) = @_;
 
   eval "require $package;"; if ($@) {
-    die "Failed to load package $package $@";
+    die "Failed to load package '$package': $@";
   }
 
   my $data_handle = do { no strict 'refs'; *{"${package}::DATA"}{IO} };
@@ -282,21 +282,23 @@ sub compile {
     }
   }
 
-  my $wrapper = "package @{[ $self->{sandbox_ns} ]}; ";
-  $wrapper .= "use strict; use warnings; use utf8; @{[ $self->{prepend} ]}; ";
-  $wrapper .= "sub { my \$_O = ''; $compiled; return \$_O; };";
+  $compiled = $self->compiled($compiled);
 
-  # Tweak the error message of trying to compile the template so that
-  # it shows the line number and the surrounding lines of the template
-  # and generally makes it easier to debug the template.
+  warn "Compiled: $compiled\n" if $ENV{DEBUG_TEMPLATE_EMBEDDED_PERL};
 
-  warn "Compiled: $wrapper\n" if $ENV{DEBUG_TEMPLATE_EMBEDDED_PERL};
-
-  my $code = eval $wrapper; if($@) {
+  my $code = eval $compiled; if($@) {
     die generate_error_message($@, $template, $source);
   }
 
   return $code;
+}
+
+sub compiled {
+  my ($self, $compiled) = @_;
+  my $wrapper = "package @{[ $self->{sandbox_ns} ]}; ";
+  $wrapper .= "use strict; use warnings; use utf8; @{[ $self->{prepend} ]}; ";
+  $wrapper .= "sub { my \$_O = ''; $compiled; return \$_O; };";
+  return $wrapper;
 }
 
 sub tokenize {
@@ -305,7 +307,6 @@ sub tokenize {
   my ($has_unmatched_open, $has_unmatched_closed) = mark_unclosed_blocks($document);
   return ($document, $has_unmatched_open, $has_unmatched_closed);
 }
-
 
 sub mark_unclosed_blocks {
   my ($element) = @_;
@@ -407,21 +408,21 @@ sub render {
 
 =head1 NAME
 
-Template::EmbeddedPerl - A template processing module for embedding Perl code
+Template::EmbeddedPerl - A template processing engine using embedding Perl code
 
 =head1 SYNOPSIS
 
   use Template::EmbeddedPerl;
 
-Create a new template object
+Create a new template object:
 
-  my $template = Template::EmbeddedPerl->new();
+  my $template = Template::EmbeddedPerl->new(); # default open and close tags are '<%' and '%>'
 
-Compile a template from a string
+Compile a template from a string:
 
   my $compiled = $template->from_string('Hello, <%= shift %>!');
 
-execute the compiled template
+#xecute the compiled template:
 
   my $output = $compiled->render('John');
 
@@ -534,6 +535,8 @@ Since I like very strict templates this default makes sense to me but if you ten
 fast and loose with your templates (for example you don't use C<my> to declare variables) you
 might not like this.  Feel free to complain to me, I might change it.
 
+Basic Patterns:
+
   <% Perl code %>
   <%= Perl expression, replaced with result %>
 
@@ -612,7 +615,7 @@ The marker indicating a template expression. Default is C<< '=' >>.
 
 =item * C<sandbox_ns>
 
-The namespace for the sandbox environment. Default is C<< 'Template::YAT::Sandbox' >>.
+The namespace for the sandbox environment. Default is C<< 'Template::EmbeddedPerl::Sandbox' >>.
 Basically the template is compiled into an anponymous subroutine and this is the namespace
 that subroutine is executed in.  This is a security feature to prevent the template from
 accessing the outside environment.
@@ -631,12 +634,12 @@ So be careful to make sure you don't let application users specify the template 
 
 =item * C<template_extension>
 
-The file extension for template files. Default is C<< 'yat' >>. So for example:
+The file extension for template files. Default is C<< 'epl' >>. So for example:
 
-  my $template = Template::EmbeddedPerl->new(directories=>['/path/to/templates']);
+  my $template = Template::EmbeddedPerl->new(directories=>['/path/to/templates', 'path/to/other/templates']);
   my $compiled = $template->from_file('hello');
 
-Would look for a file named C<hello.yat> in the directories specified.
+Would look for a file named C<hello.epl> in the directories specified.
 
 =item * C<auto_escape>
 
@@ -655,7 +658,7 @@ What this means is that if you have an expression that returns an array we will 
 the array into a string before outputting it.  Example:
 
     <% my @items = qw(foo bar baz); %>
-    <%= join ' ', @items %>
+    <%= map { "$_ " } @items %>
 
 Would output:
 
@@ -692,7 +695,7 @@ In the case above since you are not capturing the compiled template object each 
 you call C<render> you are recompiling the template. which could get expensive.
 
 On the other hand if you are keeping the template object around and reusing it you don't
-need to enable this.  Example
+need to enable this.  Example:
 
   my $ep = Template::EmbeddedPerl->new(use_cache => 1);
   my $compiled = $ep->from_string('Hello, <%= shift %>!');
@@ -793,7 +796,8 @@ Useful if you want to load templates from the same directory as your package.
 
   my $output = $template->render($template, @args);
 
-Compiles and executes the provided template content with the given arguments.
+Compiles and executes the provided template content with the given arguments. You might
+want to enable the cache if you are doing this.
 
 =head1 HELPER FUNCTIONS
 
@@ -806,6 +810,8 @@ The module provides a set of default helper functions that can be used in templa
 Returns a string as a safe string object without escaping.   Useful if you
 want to return actual HTML to your template but you better be 
 sure that HTML is safe.
+
+    <%= raw '<a href="http://example.com">Example</a>' %>
 
 =item * C<safe>
 
@@ -907,10 +913,4 @@ __END__
   }->();
 }
 %= "BB: $bb"
-
-
-todo
-
-1 vars support for hashy render
-2 tests
 

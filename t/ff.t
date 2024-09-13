@@ -76,7 +76,7 @@ my $generated = '
   my @path = (
     Template::EmbeddedPerl->directory_for_package('Template::EmbeddedPerl::Test::FF'),
     'templates',
-    'ff.yat');
+    'ff.epl');
 
   open my $fh , '<', File::Spec->catfile(@path);
 
