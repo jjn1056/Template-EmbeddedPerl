@@ -1,6 +1,6 @@
 package Template::EmbeddedPerl;
 
-our $VERSION = '0.001001';
+our $VERSION = '0.001002';
 $VERSION = eval $VERSION;
 
 use warnings;
@@ -12,6 +12,7 @@ use Digest::MD5;
 use Template::EmbeddedPerl::Compiled;
 use Template::EmbeddedPerl::Utils qw(normalize_linefeeds generate_error_message);
 use Template::EmbeddedPerl::SafeString;
+use Scalar::Util;
 
 ## New Instance of the core template methods
 
@@ -24,7 +25,23 @@ sub escape_javascript { my ($self, @args) = @_; return Template::EmbeddedPerl::U
 
 sub trim {
   my ($self, $string) = @_;
-  $string =~ s/^\s+|\s+$//g;
+  if ( (Scalar::Util::blessed($string)||'') eq 'Template::EmbeddedPerl::SafeString') {
+    $string =~s/^[ \t]+|[ \t]+$//g;
+    return $self->raw($string);
+  } else {
+    $string =~s/^[ \t]+|[ \t]+$//g;
+  }
+  return $string;
+}
+
+sub mtrim {
+  my ($self, $string) = @_;
+  if ( (Scalar::Util::blessed($string)||'') eq 'Template::EmbeddedPerl::SafeString') {
+    $string =~s/^[ \t]+|[ \t]+$//mg;
+    return $self->raw($string);
+  } else {
+    $string =~s/^[ \t]+|[ \t]+$//mg;
+  }
   return $string;
 }
 
@@ -53,6 +70,7 @@ sub new {
     auto_escape => 0,
     auto_flatten_expr => 1,
     prepend => '',
+    preamble => '',
     use_cache => 0,
     vars => 0,
     @_,
@@ -208,15 +226,17 @@ sub parse_template {
 
   ## support shorthand line start tags ##
 
-  # Convert all lines starting with %% to start with <% and then add %> to the end
-  $template =~ s/^\s*${line_start}(.*)$/${open_tag}$1${close_tag}/mg;
-  # Convert all lines starting with %= to start with <%= and then add %> to the end 
-  $template =~ s/^\s*${line_start}${expr_marker}(.*)$/${open_tag}${expr_marker}$1${close_tag}/mg;
-  # Convert all lines starting with \%% to start instead with %%
-  $template =~ s/^\s*\\${line_start}${line_start}(.*)$/${line_start}${line_start}$1/mg;
+  # Convert all lines starting with %= to start with <%= and then add %> to the end
+  $template =~ s/^\s*${line_start}${expr_marker}(.*?)(?=\\?$)/${open_tag}${expr_marker}$1${close_tag}/mg;
+  # Convert all lines starting with % to start with <% and then add %> to the end
+  $template =~ s/^\s*${line_start}(.*?)(?=\\?$)/${open_tag}$1${close_tag}/mg;
+
+  ## Escapes so you can actually have % and %= in the template
   # Convert all lines starting with \%= to start instead with %=
   $template =~ s/^\s*\\${line_start}${expr_marker}(.*)$/${line_start}${expr_marker}$1/mg;
-  
+  # Convert all lines starting with \% to start instead with %
+  $template =~ s/^\s*\\${line_start}(.*)$/${line_start}$1/mg;
+
   # This code parses the template and returns an array of parsed blocks.
   # Each block is represented as an array reference with two elements: the type and the content.
   # The type can be 'expr' for expressions enclosed in double square brackets,
@@ -235,11 +255,16 @@ sub parse_template {
       $segment =~ s/\\${line_start}/${line_start}/g;
       $segment =~ s/\\${open_tag}/${open_tag}/g;
       $segment =~ s/\\${close_tag}/${close_tag}/g;
-       $segment =~ s/\\${expr_marker}${close_tag}/${expr_marker}${close_tag}/g;
+      $segment =~ s/\\${expr_marker}${close_tag}/${expr_marker}${close_tag}/g;
 
       push @parsed, ['text', $segment];
     } else {
-      $parsed[-1][1] =~s/[ \t]+$//mg if $close_type eq "${expr_marker}${close_tag}";
+      # Support trim with =%>
+      $content = "trim $content" if $close_type eq "${expr_marker}${close_tag}";
+
+      # ?? ==%> or maybe something else...
+      # $parsed[-1][1] =~s/[ \t]+$//mg if $close_type eq "${expr_marker}${close_tag}";
+ 
       # Remove \ from escaped line_start, open_tag, and close_tag
       $content =~ s/\\${line_start}/${line_start}/g;
       $content =~ s/\\${open_tag}/${open_tag}/g;
@@ -296,8 +321,8 @@ sub compile {
 sub compiled {
   my ($self, $compiled) = @_;
   my $wrapper = "package @{[ $self->{sandbox_ns} ]}; ";
-  $wrapper .= "use strict; use warnings; use utf8; @{[ $self->{prepend} ]}; ";
-  $wrapper .= "sub { my \$_O = ''; $compiled; return \$_O; };";
+  $wrapper .= "use strict; use warnings; use utf8; @{[ $self->{preamble} ]}; ";
+  $wrapper .= "sub { my \$_O = ''; @{[ $self->{prepend} ]}; ${compiled}; return \$_O; };";
   return $wrapper;
 }
 
@@ -572,7 +597,7 @@ where you don't want the whitespace to affect the output.
 If you want to skip the newline after the closing tag you can use a backslash.
 
   <% Perl code %>\
-  <%= Perl expression, replaced with result, trimmed %>\
+  <%= Perl expression, replaced with result, no newline %>\
 
 You probably don't care about this so much with HTML since it collapses whitespace but it can be
 useful for other types of output like plain text or if you need some embedded Perl inside
@@ -664,12 +689,19 @@ Would output:
 
     foo bar baz
 
-=item * C<prepend>
+=item * C<preamble>
 
-Perl code to prepend to the compiled template. Default is an empty string. For example
+Add Perl code to the 'preamble' section of the compiled template. This is to top of the generated
+script prior to the anonymous sub representing your template.Default is an empty string. For example
 you can enable modern Perl features like signatures by setting this to C<< 'use v5.40;' >>.
 
 Use this to setup any pragmas or modules you need to use in your template code.
+
+=item * C<prepend>
+
+Perl code to prepend to the compiled template. Default is an empty string. This goes just inside the
+anonyous subroutine that is called to return your document string. For example you can use this to
+pull passed arguments off C<@_>.
 
 =item * C<helpers>
 
@@ -757,6 +789,10 @@ no __DATA__ section is found.
 
 Trims leading and trailing whitespace from the provided string. Returns the
 trimmed string.
+
+=head2 mtrim
+
+Same as C<trim> but trims leading and trailing whitespace for a multiline string.
 
 =head2 default_helpers
 
