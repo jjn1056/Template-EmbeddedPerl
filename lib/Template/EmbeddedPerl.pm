@@ -1,6 +1,6 @@
 package Template::EmbeddedPerl;
 
-our $VERSION = '0.001002';
+our $VERSION = '0.001003';
 $VERSION = eval $VERSION;
 
 use warnings;
@@ -73,6 +73,7 @@ sub new {
     preamble => '',
     use_cache => 0,
     vars => 0,
+    comment_mark => '#',
     @_,
   );
 
@@ -119,7 +120,8 @@ sub default_helpers {
     html_escape       => sub { my ($self, @args) = @_; return $self->html_escape(@args); },
     url_encode        => sub { my ($self, @args) = @_; return $self->url_encode(@args); },
     escape_javascript => sub { my ($self, @args) = @_; return $self->escape_javascript(@args); },
-    trim             => sub { my ($self, $arg) = @_; return $self->trim($arg); },
+    trim              => sub { my ($self, $arg) = @_; return $self->trim($arg); },
+    mtrim             => sub { my ($self, $arg) = @_; return $self->mtrim($arg); },
   );
 }
 
@@ -223,6 +225,8 @@ sub parse_template {
   my $close_tag = $self->{close_tag};
   my $expr_marker = $self->{expr_marker};
   my $line_start = $self->{line_start};
+  my $comment_mark = $self->{comment_mark};
+
 
   ## support shorthand line start tags ##
 
@@ -256,6 +260,10 @@ sub parse_template {
       $segment =~ s/\\${open_tag}/${open_tag}/g;
       $segment =~ s/\\${close_tag}/${close_tag}/g;
       $segment =~ s/\\${expr_marker}${close_tag}/${expr_marker}${close_tag}/g;
+
+      # check the segment for comment lines 
+      $segment =~ s/^([ \t]*?${comment_mark}.*)$/\\/mg;
+      $segment =~ s/^([ \t]*?\\${comment_mark})/${comment_mark}/mg;
 
       push @parsed, ['text', $segment];
     } else {
@@ -615,6 +623,16 @@ If you really need to use the actual tags in your output you can escape them wit
   \%=       => %=
   \%        => %
 
+Lastly you can add full line comments to your templates that will be removed from the final
+output
+
+  # This is a comment
+  <p>Regular HTML</p>
+
+A comment is declared with a single C<#> at the start of the line (or with only whitespace preceeding it).
+This line will be removed from the output, including its newline.   If you really need a '#'you can escape it
+with C<\#> (this is only needed if the '#' is at the beginning of the line, or there's only preceding whitespace.
+
 =head1 METHODS
 
 =head2 new
@@ -737,6 +755,10 @@ In the valid above the compiled template is cached and reused each time you call
 
 Obviously this only works usefully in a persistent environment like mod_perl or a PSGI server.
 
+=item * C<comment_mark>
+
+Defaults to '#'. Indicates the beginning of a comment in the template which is to be removed
+from the output.
 =back
 
 =head2 from_string
