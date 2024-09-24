@@ -1,6 +1,6 @@
 package Template::EmbeddedPerl;
 
-our $VERSION = '0.001003';
+our $VERSION = '0.001004';
 $VERSION = eval $VERSION;
 
 use warnings;
@@ -9,10 +9,11 @@ use strict;
 use PPI::Document;
 use File::Spec;
 use Digest::MD5;
+use Scalar::Util;
 use Template::EmbeddedPerl::Compiled;
 use Template::EmbeddedPerl::Utils qw(normalize_linefeeds generate_error_message);
 use Template::EmbeddedPerl::SafeString;
-use Scalar::Util;
+
 
 ## New Instance of the core template methods
 
