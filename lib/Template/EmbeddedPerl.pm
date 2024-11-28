@@ -566,7 +566,7 @@ Compile a template from a string:
 
   my $compiled = $template->from_string('Hello, <%= shift %>!');
 
-#xecute the compiled template:
+execute the compiled template:
 
   my $output = $compiled->render('John');
 
@@ -744,6 +744,32 @@ A comment is declared with a single C<#> at the start of the line (or with only 
 This line will be removed from the output, including its newline.   If you really need a '#'you can escape it
 with C<\#> (this is only needed if the '#' is at the beginning of the line, or there's only preceding whitespace.
 
+=head2 Interpolation Syntax
+
+If you want to embed Perl variables directly in the template without using the C<%= ... %> syntax,
+you can enable interpolation. This allows you to embed Perl variables directly in the template
+without using the C<%= ... %> syntax. For example:
+
+  my $template = Template::EmbeddedPerl->new(interpolation => 1, prepend => 'my $name = shift');
+  my $compiled = $template->from_string('Hello, $name!');
+  my $output = $compiled->render('John');
+
+C<$output> is:
+
+  Hello, John!
+
+This works by noticing a '$' followed by a Perl variable name (and method calls, etc). So if you
+need to put a real '$' in your code you will need to escape it with C<\$>.
+
+This only works on a single line and is intended to help reduce template complexity and noise
+for simple placeholder template sections.  Nevertheless I did try top make it work with reasonable
+complex single variable expressions.  Submit a test case if you find something that doesn't work
+which you think should.
+
+See the section on the interpolation configuration switch below for more information.  This is
+disabled by default and I consider it experimental at this time since parsing Perl code with
+regular expressions is a bit of a hack.
+
 =head1 METHODS
 
 =head2 new
@@ -916,6 +942,10 @@ This will output:
 You can nest method calls and the methods can contain arguments of varying complexity, including
 anonymous subroutines.  However you cannot span lines, you must close all open parens and braces
 on the same line.  You can review the existing test case at C<t/interpolation.t> for examples.
+
+This works by noticing a '$' followed by a Perl variable name (and method calls, etc). So if you
+need to put a real '$' in your code you will need to escape it with C<\$>.  It does not work
+for other perl sigils at this time (for example '@' or '%').  
 
 This feature is experimental so if you have trouble with it submit a trouble ticket with test
 case (review the C<t/interpolation.t> test cases for examples of the type of test cases I need).
