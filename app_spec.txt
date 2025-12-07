@@ -1,0 +1,1026 @@
+<project_specification>
+  <project_name>Template-EmbeddedPerl HTML Attribute Directives</project_name>
+
+  <overview>
+    Add HTML attribute-based directives to Template-EmbeddedPerl that allow conditional
+    rendering and iteration to be expressed directly on HTML elements, reducing template
+    verbosity for common patterns.
+
+    Instead of:
+    ```html
+    <% if ($show_sidebar) { %>
+      <div class="sidebar">content</div>
+    <% } %>
+    ```
+
+    Write:
+    ```html
+    <div @if="$show_sidebar" class="sidebar">content</div>
+    ```
+
+    This syntax is inspired by Vue.js, Alpine.js, and Angular template directives.
+    The directive becomes part of the element it controls, making templates more
+    readable and reducing ceremony for the most common conditional/iteration patterns.
+
+    Design Philosophy:
+    - Directives control the element they're attached to (including the element itself)
+    - Preprocessing transforms directives to standard template syntax before compilation
+    - Full Perl expressions supported in directive values
+    - Graceful handling of edge cases (nesting, self-closing tags, etc.)
+    - Directives are optional syntactic sugar - standard <% %> syntax always available
+  </overview>
+
+  <supported_directives>
+    <directive name="@if">
+      <description>Conditionally render the element and its contents</description>
+      <syntax>&lt;element @if="$condition"&gt;...&lt;/element&gt;</syntax>
+      <transforms_to>&lt;% if ($condition) { %&gt;&lt;element&gt;...&lt;/element&gt;&lt;% } %&gt;</transforms_to>
+      <examples>
+        <example>
+          <input>&lt;p @if="$user"&gt;Welcome, &lt;%= $user-&gt;name %&gt;&lt;/p&gt;</input>
+          <output>&lt;% if ($user) { %&gt;&lt;p&gt;Welcome, &lt;%= $user-&gt;name %&gt;&lt;/p&gt;&lt;% } %&gt;</output>
+        </example>
+        <example>
+          <input>&lt;div @if="$items-&gt;@*" class="list"&gt;...&lt;/div&gt;</input>
+          <output>&lt;% if ($items-&gt;@*) { %&gt;&lt;div class="list"&gt;...&lt;/div&gt;&lt;% } %&gt;</output>
+        </example>
+      </examples>
+    </directive>
+
+    <directive name="@unless">
+      <description>Render element unless condition is true (negated @if)</description>
+      <syntax>&lt;element @unless="$condition"&gt;...&lt;/element&gt;</syntax>
+      <transforms_to>&lt;% unless ($condition) { %&gt;&lt;element&gt;...&lt;/element&gt;&lt;% } %&gt;</transforms_to>
+      <examples>
+        <example>
+          <input>&lt;p @unless="$errors-&gt;@*"&gt;Form is valid&lt;/p&gt;</input>
+          <output>&lt;% unless ($errors-&gt;@*) { %&gt;&lt;p&gt;Form is valid&lt;/p&gt;&lt;% } %&gt;</output>
+        </example>
+      </examples>
+    </directive>
+
+    <directive name="@foreach">
+      <description>Repeat the element for each item in a collection</description>
+      <syntax>&lt;element @foreach="my $item (@items)"&gt;...&lt;/element&gt;</syntax>
+      <transforms_to>&lt;% foreach my $item (@items) { %&gt;&lt;element&gt;...&lt;/element&gt;&lt;% } %&gt;</transforms_to>
+      <notes>
+        - The entire element (including tag) is repeated for each iteration
+        - Loop variable is available inside the element and its contents
+        - Supports all Perl foreach syntax variations
+      </notes>
+      <examples>
+        <example>
+          <input>&lt;li @foreach="my $item (@items)"&gt;&lt;%= $item-&gt;name %&gt;&lt;/li&gt;</input>
+          <output>&lt;% foreach my $item (@items) { %&gt;&lt;li&gt;&lt;%= $item-&gt;name %&gt;&lt;/li&gt;&lt;% } %&gt;</output>
+        </example>
+        <example title="with index">
+          <input>&lt;tr @foreach="my ($i, $row) (indexed @rows)"&gt;...&lt;/tr&gt;</input>
+          <output>&lt;% foreach my ($i, $row) (indexed @rows) { %&gt;&lt;tr&gt;...&lt;/tr&gt;&lt;% } %&gt;</output>
+        </example>
+        <example title="simple iteration">
+          <input>&lt;option @foreach="@options"&gt;&lt;%= $_ %&gt;&lt;/option&gt;</input>
+          <output>&lt;% foreach (@options) { %&gt;&lt;option&gt;&lt;%= $_ %&gt;&lt;/option&gt;&lt;% } %&gt;</output>
+        </example>
+      </examples>
+    </directive>
+
+    <directive name="@for">
+      <description>C-style for loop repeating the element</description>
+      <syntax>&lt;element @for="my $i = 0; $i &lt; 10; $i++"&gt;...&lt;/element&gt;</syntax>
+      <transforms_to>&lt;% for (my $i = 0; $i &lt; 10; $i++) { %&gt;&lt;element&gt;...&lt;/element&gt;&lt;% } %&gt;</transforms_to>
+      <examples>
+        <example>
+          <input>&lt;div @for="my $i = 1; $i &lt;= 5; $i++"&gt;Page &lt;%= $i %&gt;&lt;/div&gt;</input>
+          <output>&lt;% for (my $i = 1; $i &lt;= 5; $i++) { %&gt;&lt;div&gt;Page &lt;%= $i %&gt;&lt;/div&gt;&lt;% } %&gt;</output>
+        </example>
+      </examples>
+    </directive>
+
+    <directive name="@while">
+      <description>Repeat element while condition is true</description>
+      <syntax>&lt;element @while="$condition"&gt;...&lt;/element&gt;</syntax>
+      <transforms_to>&lt;% while ($condition) { %&gt;&lt;element&gt;...&lt;/element&gt;&lt;% } %&gt;</transforms_to>
+      <examples>
+        <example>
+          <input>&lt;tr @while="my $row = $sth-&gt;fetchrow_hashref"&gt;...&lt;/tr&gt;</input>
+          <output>&lt;% while (my $row = $sth-&gt;fetchrow_hashref) { %&gt;&lt;tr&gt;...&lt;/tr&gt;&lt;% } %&gt;</output>
+        </example>
+      </examples>
+    </directive>
+
+    <directive name="@with">
+      <description>Create a lexical scope with a variable assignment</description>
+      <syntax>&lt;element @with="my $var = $expr"&gt;...&lt;/element&gt;</syntax>
+      <transforms_to>&lt;% if (my $var = $expr) { %&gt;&lt;element&gt;...&lt;/element&gt;&lt;% } %&gt;</transforms_to>
+      <notes>
+        - Combines variable assignment with truthiness check
+        - Element only renders if assigned value is truthy
+        - Useful for unpacking nested data or method results
+      </notes>
+      <examples>
+        <example>
+          <input>&lt;div @with="my $addr = $user-&gt;address"&gt;&lt;%= $addr-&gt;city %&gt;&lt;/div&gt;</input>
+          <output>&lt;% if (my $addr = $user-&gt;address) { %&gt;&lt;div&gt;&lt;%= $addr-&gt;city %&gt;&lt;/div&gt;&lt;% } %&gt;</output>
+        </example>
+      </examples>
+    </directive>
+  </supported_directives>
+
+  <combining_directives>
+    <description>
+      Multiple directives can be combined on a single element. They are processed
+      in a defined order: loop directives first (outermost), then conditionals.
+    </description>
+    <processing_order>
+      1. @foreach / @for / @while (outermost - element repeats)
+      2. @if / @unless / @with (applied per iteration)
+    </processing_order>
+    <examples>
+      <example title="filter during iteration">
+        <input>&lt;li @foreach="my $item (@items)" @if="$item-&gt;visible"&gt;&lt;%= $item-&gt;name %&gt;&lt;/li&gt;</input>
+        <output>&lt;% foreach my $item (@items) { %&gt;&lt;% if ($item-&gt;visible) { %&gt;&lt;li&gt;&lt;%= $item-&gt;name %&gt;&lt;/li&gt;&lt;% } %&gt;&lt;% } %&gt;</output>
+        <description>Loop over all items, but only render visible ones</description>
+      </example>
+      <example title="conditional loop">
+        <input>&lt;ul @if="@items" @foreach="my $item (@items)"&gt;...&lt;/ul&gt;</input>
+        <note>This is likely a mistake - @foreach already handles empty arrays gracefully.
+              The @if would check truthiness before the loop even starts.</note>
+      </example>
+    </examples>
+  </combining_directives>
+
+  <self_closing_tags>
+    <description>
+      Self-closing tags (void elements and XML-style self-closing) are fully supported.
+    </description>
+    <examples>
+      <example title="void element">
+        <input>&lt;img @if="$show_avatar" src="&lt;%= $avatar_url %&gt;" /&gt;</input>
+        <output>&lt;% if ($show_avatar) { %&gt;&lt;img src="&lt;%= $avatar_url %&gt;" /&gt;&lt;% } %&gt;</output>
+      </example>
+      <example title="conditional input">
+        <input>&lt;input @if="$editable" type="text" name="title" /&gt;</input>
+        <output>&lt;% if ($editable) { %&gt;&lt;input type="text" name="title" /&gt;&lt;% } %&gt;</output>
+      </example>
+      <example title="repeated br">
+        <input>&lt;br @foreach="1..3" /&gt;</input>
+        <output>&lt;% foreach (1..3) { %&gt;&lt;br /&gt;&lt;% } %&gt;</output>
+      </example>
+    </examples>
+    <void_elements>
+      area, base, br, col, embed, hr, img, input, link, meta,
+      param, source, track, wbr
+    </void_elements>
+  </self_closing_tags>
+
+  <nesting_and_edge_cases>
+    <nested_same_tags>
+      <description>
+        Properly handle elements with directives that contain same-named child elements.
+      </description>
+      <example>
+        <input>
+          &lt;div @if="$show_outer" class="outer"&gt;
+            &lt;div class="inner"&gt;
+              &lt;div&gt;deeply nested&lt;/div&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+        </input>
+        <output>
+          &lt;% if ($show_outer) { %&gt;&lt;div class="outer"&gt;
+            &lt;div class="inner"&gt;
+              &lt;div&gt;deeply nested&lt;/div&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;&lt;% } %&gt;
+        </output>
+      </example>
+    </nested_same_tags>
+
+    <nested_directives>
+      <description>
+        Directives on nested elements work independently.
+      </description>
+      <example>
+        <input>
+          &lt;ul @if="@categories"&gt;
+            &lt;li @foreach="my $cat (@categories)"&gt;
+              &lt;span&gt;&lt;%= $cat-&gt;name %&gt;&lt;/span&gt;
+              &lt;ul @if="$cat-&gt;children-&gt;@*"&gt;
+                &lt;li @foreach="my $child ($cat-&gt;children-&gt;@*)"&gt;
+                  &lt;%= $child-&gt;name %&gt;
+                &lt;/li&gt;
+              &lt;/ul&gt;
+            &lt;/li&gt;
+          &lt;/ul&gt;
+        </input>
+      </example>
+    </nested_directives>
+
+    <attributes_with_special_chars>
+      <description>
+        Handle directive values containing quotes, greater-than signs, etc.
+      </description>
+      <examples>
+        <example title="comparison operator">
+          <input>&lt;span @if="$count &gt; 0"&gt;Has items&lt;/span&gt;</input>
+          <note>Use HTML entity &amp;gt; or the parser must handle &gt; inside quotes</note>
+        </example>
+        <example title="string comparison">
+          <input>&lt;p @if="$status eq 'active'"&gt;Active&lt;/p&gt;</input>
+          <note>Single quotes inside double-quoted attribute work fine</note>
+        </example>
+        <example title="complex expression">
+          <input>&lt;div @if="$items-&gt;@* &amp;&amp; $user-&gt;can_view"&gt;...&lt;/div&gt;</input>
+        </example>
+      </examples>
+    </attributes_with_special_chars>
+
+    <template_code_inside_elements>
+      <description>
+        Elements with directives can contain any template code inside.
+      </description>
+      <example>
+        <input>
+          &lt;tr @foreach="my $row (@rows)"&gt;
+            &lt;% for my $col (@columns) { %&gt;
+              &lt;td&gt;&lt;%= $row-&gt;{$col} %&gt;&lt;/td&gt;
+            &lt;% } %&gt;
+          &lt;/tr&gt;
+        </input>
+      </example>
+    </template_code_inside_elements>
+
+    <escaping_directives>
+      <description>
+        Escape @ to output literal @-prefixed attributes (e.g., for Alpine.js).
+      </description>
+      <syntax>\@directive or @@directive</syntax>
+      <examples>
+        <example title="alpine.js passthrough">
+          <input>&lt;div \@click="open = true"&gt;Click me&lt;/div&gt;</input>
+          <output>&lt;div @click="open = true"&gt;Click me&lt;/div&gt;</output>
+        </example>
+        <example title="double-@ escape">
+          <input>&lt;div @@click="handler"&gt;...&lt;/div&gt;</input>
+          <output>&lt;div @click="handler"&gt;...&lt;/div&gt;</output>
+        </example>
+      </examples>
+    </escaping_directives>
+
+    <whitespace_handling>
+      <description>
+        Preserve meaningful whitespace while not introducing extra whitespace
+        from the transformation.
+      </description>
+      <notes>
+        - Whitespace before/after the element is preserved
+        - No extra newlines introduced by transformation
+        - Indentation inside element content unchanged
+      </notes>
+    </whitespace_handling>
+  </nesting_and_edge_cases>
+
+  <implementation_approach>
+    <phase name="preprocessing">
+      <description>
+        Transform attribute directives to standard template syntax before
+        normal template compilation. This keeps the core template engine unchanged.
+      </description>
+      <steps>
+        <step number="1">
+          <name>Scan for directive attributes</name>
+          <description>
+            Use regex to find opening tags containing @if, @unless, @foreach,
+            @for, @while, or @with attributes.
+          </description>
+        </step>
+        <step number="2">
+          <name>Parse the opening tag</name>
+          <description>
+            Extract tag name, directive value, and remaining attributes.
+            Handle quoted attribute values properly.
+          </description>
+        </step>
+        <step number="3">
+          <name>Find matching close tag</name>
+          <description>
+            For non-void elements, find the matching closing tag accounting for:
+            - Nested same-name tags (count open/close)
+            - Self-closing tags
+            - Void elements (no closing tag needed)
+          </description>
+        </step>
+        <step number="4">
+          <name>Generate transformed output</name>
+          <description>
+            Wrap the element (with directive attribute removed) in appropriate
+            template control structures.
+          </description>
+        </step>
+        <step number="5">
+          <name>Process recursively</name>
+          <description>
+            Continue scanning for more directives (handles nested directives).
+          </description>
+        </step>
+      </steps>
+    </phase>
+
+    <regex_patterns>
+      <pattern name="opening_tag_with_directive">
+        <description>Match opening tag containing any directive attribute</description>
+        <regex><![CDATA[
+          <
+          (\w+)                           # Tag name (captured)
+          (                               # Attributes (captured as group)
+            (?:
+              \s+
+              (?:
+                @(if|unless|foreach|for|while|with)  # Directive (captured)
+                =
+                "([^"]*)"                 # Directive value (captured)
+                |
+                [^@>\s][^>\s]*            # Other attribute name
+                (?:
+                  =
+                  (?:"[^"]*"|'[^']*'|[^\s>]+)  # Attribute value
+                )?
+              )
+            )*
+          )
+          \s*
+          (/?)                            # Self-closing slash (captured)
+          >
+        ]]></regex>
+      </pattern>
+      <pattern name="closing_tag">
+        <description>Match closing tag for specific element</description>
+        <regex>&lt;/TAG_NAME\s*&gt;</regex>
+      </pattern>
+    </regex_patterns>
+
+    <tag_matching_algorithm>
+      <description>
+        Find matching close tag for an element, handling nesting.
+      </description>
+      <pseudocode>
+        ```
+        function find_matching_close(content, tag_name, start_pos):
+            depth = 1
+            pos = start_pos
+
+            while depth > 0 and pos < len(content):
+                # Find next opening or closing tag of same name
+                next_open = find_pattern(content, "<{tag_name}[\\s>/]", pos)
+                next_close = find_pattern(content, "</{tag_name}\\s*>", pos)
+
+                if next_close == NOT_FOUND:
+                    return ERROR  # Unclosed tag
+
+                if next_open != NOT_FOUND and next_open < next_close:
+                    # Check if it's self-closing
+                    if not is_self_closing(content, next_open):
+                        depth += 1
+                    pos = after(next_open)
+                else:
+                    depth -= 1
+                    if depth == 0:
+                        return next_close
+                    pos = after(next_close)
+
+            return ERROR
+        ```
+      </pseudocode>
+    </tag_matching_algorithm>
+
+    <integration_point>
+      <description>
+        The preprocessing happens in Template::EmbeddedPerl before the existing
+        parsing pipeline. Add new method and call it early in compilation.
+      </description>
+      <location>lib/Template/EmbeddedPerl.pm</location>
+      <method_name>_preprocess_attribute_directives</method_name>
+      <call_site>
+        Called at the start of compile_template_string(), before existing
+        _convert_shorthand() processing.
+      </call_site>
+    </integration_point>
+
+    <configuration>
+      <option name="attribute_directives">
+        <type>Boolean</type>
+        <default>1 (enabled)</default>
+        <description>Enable/disable attribute directive preprocessing</description>
+      </option>
+      <option name="directive_prefix">
+        <type>String</type>
+        <default>'@'</default>
+        <description>Prefix character for directive attributes</description>
+      </option>
+    </configuration>
+  </implementation_approach>
+
+  <api_additions>
+    <constructor_option name="attribute_directives">
+      <description>Enable or disable HTML attribute directive processing</description>
+      <type>Boolean</type>
+      <default>1</default>
+      <example>
+        ```perl
+        my $template = Template::EmbeddedPerl->new(
+            attribute_directives => 1,  # enabled by default
+        );
+        ```
+      </example>
+    </constructor_option>
+
+    <constructor_option name="directive_prefix">
+      <description>Character prefix for directive attributes</description>
+      <type>String</type>
+      <default>'@'</default>
+      <example>
+        ```perl
+        # Use colon prefix instead (Vue-style)
+        my $template = Template::EmbeddedPerl->new(
+            directive_prefix => ':',
+        );
+        # Now use <div :if="$cond">
+        ```
+      </example>
+    </constructor_option>
+
+    <internal_method name="_preprocess_attribute_directives">
+      <description>Transform attribute directives to template syntax</description>
+      <signature>$self->_preprocess_attribute_directives($template_string)</signature>
+      <returns>Transformed template string</returns>
+    </internal_method>
+
+    <internal_method name="_find_matching_close_tag">
+      <description>Find closing tag for element, handling nesting</description>
+      <signature>$self->_find_matching_close_tag($content, $tag_name, $start_pos)</signature>
+      <returns>Position of closing tag, or undef if not found</returns>
+    </internal_method>
+
+    <internal_method name="_is_void_element">
+      <description>Check if tag name is a void element (no closing tag)</description>
+      <signature>$self->_is_void_element($tag_name)</signature>
+      <returns>Boolean</returns>
+    </internal_method>
+  </api_additions>
+
+  <error_handling>
+    <error name="unclosed_directive_element">
+      <description>Element with directive has no matching closing tag</description>
+      <message>Unclosed element '&lt;{tag}&gt;' with @{directive} directive at line {line}</message>
+      <example>
+        ```html
+        <div @if="$show">
+          <p>Content
+        <!-- missing </div> -->
+        ```
+      </example>
+    </error>
+
+    <error name="invalid_directive_syntax">
+      <description>Directive attribute value is malformed</description>
+      <message>Invalid @{directive} syntax at line {line}: {details}</message>
+      <example>
+        ```html
+        <p @if="">Empty condition</p>
+        <p @foreach="$item">Missing loop syntax</p>
+        ```
+      </example>
+    </error>
+
+    <error name="nested_loop_variable_shadow">
+      <description>Warning when nested loop uses same variable name</description>
+      <message>Warning: Loop variable '${var}' shadows outer variable at line {line}</message>
+      <severity>Warning (non-fatal)</severity>
+    </error>
+  </error_handling>
+
+  <examples>
+    <example name="basic_conditional">
+      <title>Simple conditional rendering</title>
+      <template>
+        ```html
+        <div class="user-info">
+          <h1>User Profile</h1>
+          <p @if="$user">Welcome, <%= $user->name %></p>
+          <p @unless="$user">Please log in</p>
+        </div>
+        ```
+      </template>
+      <compiles_to>
+        ```html
+        <div class="user-info">
+          <h1>User Profile</h1>
+          <% if ($user) { %><p>Welcome, <%= $user->name %></p><% } %>
+          <% unless ($user) { %><p>Please log in</p><% } %>
+        </div>
+        ```
+      </compiles_to>
+    </example>
+
+    <example name="navigation_list">
+      <title>Navigation with active state</title>
+      <template>
+        ```html
+        <nav>
+          <ul>
+            <li @foreach="my $link (@nav_links)">
+              <a href="<%= $link->{url} %>"
+                 class="<%= $link->{url} eq $current_url ? 'active' : '' %>">
+                <%= $link->{label} %>
+              </a>
+            </li>
+          </ul>
+        </nav>
+        ```
+      </template>
+    </example>
+
+    <example name="data_table">
+      <title>Table with conditional columns</title>
+      <template>
+        ```html
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th @if="$show_admin_cols">Role</th>
+              <th @if="$show_admin_cols">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr @foreach="my $user (@users)" @if="$user->active">
+              <td><%= $user->name %></td>
+              <td><%= $user->email %></td>
+              <td @if="$show_admin_cols"><%= $user->role %></td>
+              <td @if="$show_admin_cols">
+                <button>Edit</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        ```
+      </template>
+    </example>
+
+    <example name="form_with_errors">
+      <title>Form with conditional error display</title>
+      <template>
+        ```html
+        <form method="POST">
+          <div class="field">
+            <label for="email">Email</label>
+            <input type="email" name="email" id="email"
+                   value="<%= $form->{email} // '' %>" />
+            <span @if="$errors->{email}" class="error">
+              <%= $errors->{email} %>
+            </span>
+          </div>
+
+          <div class="field">
+            <label for="password">Password</label>
+            <input type="password" name="password" id="password" />
+            <span @if="$errors->{password}" class="error">
+              <%= $errors->{password} %>
+            </span>
+          </div>
+
+          <button type="submit">Submit</button>
+        </form>
+        ```
+      </template>
+    </example>
+
+    <example name="nested_lists">
+      <title>Nested category tree</title>
+      <template>
+        ```html
+        <ul class="category-tree">
+          <li @foreach="my $cat (@categories)">
+            <span class="category-name"><%= $cat->name %></span>
+            <ul @if="$cat->children->@*">
+              <li @foreach="my $child ($cat->children->@*)">
+                <span><%= $child->name %></span>
+                <ul @if="$child->children->@*">
+                  <li @foreach="my $grandchild ($child->children->@*)">
+                    <%= $grandchild->name %>
+                  </li>
+                </ul>
+              </li>
+            </ul>
+          </li>
+        </ul>
+        ```
+      </template>
+    </example>
+
+    <example name="conditional_attributes_mixed">
+      <title>Mixing directives with other template features</title>
+      <template>
+        ```html
+        <div @if="$todo"
+             id="todo-<%= $todo->id %>"
+             class="todo-item <%= $todo->completed ? 'done' : '' %>">
+
+          <input type="checkbox"
+                 <%= $todo->completed ? 'checked' : '' %> />
+
+          <label><%= $todo->title %></label>
+
+          <button @if="$can_delete" class="delete">×</button>
+        </div>
+        ```
+      </template>
+    </example>
+
+    <example name="with_directive">
+      <title>Using @with for safe nested access</title>
+      <template>
+        ```html
+        <div class="user-details">
+          <div @with="my $profile = $user->profile">
+            <img @if="$profile->avatar" src="<%= $profile->avatar %>" />
+            <p><%= $profile->bio %></p>
+
+            <div @with="my $addr = $profile->address">
+              <p><%= $addr->street %></p>
+              <p><%= $addr->city %>, <%= $addr->state %></p>
+            </div>
+          </div>
+        </div>
+        ```
+      </template>
+      <notes>
+        Without @with, you'd need multiple $user->profile calls or
+        explicit variable assignment in <% %> blocks.
+      </notes>
+    </example>
+
+    <example name="pagination">
+      <title>Pagination controls</title>
+      <template>
+        ```html
+        <nav @if="$total_pages > 1" class="pagination">
+          <a @if="$page > 1" href="?page=<%= $page - 1 %>">Previous</a>
+
+          <span @foreach="my $p (1..$total_pages)">
+            <a @if="$p != $page" href="?page=<%= $p %>"><%= $p %></a>
+            <strong @if="$p == $page"><%= $p %></strong>
+          </span>
+
+          <a @if="$page < $total_pages" href="?page=<%= $page + 1 %>">Next</a>
+        </nav>
+        ```
+      </template>
+    </example>
+
+    <example name="alpine_passthrough">
+      <title>Working alongside Alpine.js</title>
+      <template>
+        ```html
+        <div x-data="{ open: false }">
+          <!-- Escaped @ passes through to Alpine -->
+          <button \@click="open = !open">Toggle</button>
+
+          <!-- Template directive processes at render time -->
+          <div @if="$feature_enabled" x-show="open">
+            <p \@click.away="open = false">
+              Click outside to close
+            </p>
+          </div>
+        </div>
+        ```
+      </template>
+      <compiles_to>
+        ```html
+        <div x-data="{ open: false }">
+          <button @click="open = !open">Toggle</button>
+
+          <% if ($feature_enabled) { %><div x-show="open">
+            <p @click.away="open = false">
+              Click outside to close
+            </p>
+          </div><% } %>
+        </div>
+        ```
+      </compiles_to>
+    </example>
+  </examples>
+
+  <testing_strategy>
+    <test_file>t/attribute_directives.t</test_file>
+
+    <test_categories>
+      <category name="basic_directives">
+        <tests>
+          - @if with truthy condition renders element
+          - @if with falsy condition omits element
+          - @unless with truthy condition omits element
+          - @unless with falsy condition renders element
+          - @foreach iterates over array
+          - @foreach with empty array renders nothing
+          - @for c-style loop works
+          - @while loop works
+          - @with assigns and checks truthiness
+        </tests>
+      </category>
+
+      <category name="self_closing_tags">
+        <tests>
+          - @if on self-closing tag (img, input, br)
+          - @foreach on self-closing tag
+          - Void elements without explicit />
+          - XML-style self-closing on non-void elements
+        </tests>
+      </category>
+
+      <category name="nesting">
+        <tests>
+          - Nested same-name elements find correct close tag
+          - Deeply nested same-name elements
+          - Nested directives on different elements
+          - Mixed nesting with standard template blocks
+        </tests>
+      </category>
+
+      <category name="combined_directives">
+        <tests>
+          - @foreach with @if on same element
+          - @foreach with @unless on same element
+          - Processing order (loop before conditional)
+        </tests>
+      </category>
+
+      <category name="edge_cases">
+        <tests>
+          - Directive value with single quotes inside
+          - Directive value with > comparison operator
+          - Directive value with && and || operators
+          - Directive value with method chains
+          - Escaped @ prefix (\@) passes through
+          - Double-@ escape (@@) produces single @
+          - Whitespace preservation
+          - Multiline element with directive
+        </tests>
+      </category>
+
+      <category name="error_handling">
+        <tests>
+          - Unclosed element with directive reports error
+          - Empty directive value reports error
+          - Invalid @foreach syntax reports helpful error
+          - Line numbers in error messages are correct
+        </tests>
+      </category>
+
+      <category name="integration">
+        <tests>
+          - Directives work with auto_escape
+          - Directives work with interpolation mode
+          - Directives work with block capture helpers
+          - Directives work with custom tag delimiters
+          - Disabled via attribute_directives => 0
+        </tests>
+      </category>
+    </test_categories>
+
+    <test_examples>
+      ```perl
+      use Test2::V0;
+      use Template::EmbeddedPerl;
+
+      my $t = Template::EmbeddedPerl->new(auto_escape => 1);
+
+      # Basic @if
+      {
+          my $tmpl = '<p @if="$show">visible</p>';
+          my $out = $t->render($tmpl, show => 1);
+          is $out, '<p>visible</p>', '@if truthy renders';
+
+          $out = $t->render($tmpl, show => 0);
+          is $out, '', '@if falsy omits';
+      }
+
+      # @foreach
+      {
+          my $tmpl = '<li @foreach="my $x (@items)"><%= $x %></li>';
+          my $out = $t->render($tmpl, items => [1, 2, 3]);
+          is $out, '<li>1</li><li>2</li><li>3</li>', '@foreach iterates';
+      }
+
+      # Nested same tags
+      {
+          my $tmpl = '<div @if="$show"><div>inner</div></div>';
+          my $out = $t->render($tmpl, show => 1);
+          is $out, '<div><div>inner</div></div>', 'nested tags handled';
+      }
+
+      # Combined directives
+      {
+          my $tmpl = '<li @foreach="my $x (@items)" @if="$x % 2"><%= $x %></li>';
+          my $out = $t->render($tmpl, items => [1, 2, 3, 4, 5]);
+          is $out, '<li>1</li><li>3</li><li>5</li>', 'combined directives';
+      }
+
+      # Self-closing
+      {
+          my $tmpl = '<img @if="$src" src="<%= $src %>" />';
+          my $out = $t->render($tmpl, src => 'photo.jpg');
+          is $out, '<img src="photo.jpg" />', 'self-closing with directive';
+      }
+
+      # Escaped @
+      {
+          my $tmpl = '<button \@click="handler">Click</button>';
+          my $out = $t->render($tmpl);
+          is $out, '<button @click="handler">Click</button>', 'escaped @ passes through';
+      }
+
+      done_testing;
+      ```
+    </test_examples>
+  </testing_strategy>
+
+  <implementation_steps>
+    <step number="1">
+      <title>Add configuration options</title>
+      <tasks>
+        - Add 'attribute_directives' option to constructor (default: 1)
+        - Add 'directive_prefix' option to constructor (default: '@')
+        - Document new options in POD
+      </tasks>
+    </step>
+
+    <step number="2">
+      <title>Implement void element detection</title>
+      <tasks>
+        - Create _is_void_element() method
+        - List all HTML5 void elements
+        - Handle case-insensitive tag names
+      </tasks>
+    </step>
+
+    <step number="3">
+      <title>Implement close tag finder</title>
+      <tasks>
+        - Create _find_matching_close_tag() method
+        - Handle nested same-name elements
+        - Handle self-closing tags
+        - Return position or undef
+      </tasks>
+    </step>
+
+    <step number="4">
+      <title>Implement directive preprocessor</title>
+      <tasks>
+        - Create _preprocess_attribute_directives() method
+        - Parse opening tags with directives
+        - Extract directive type and value
+        - Extract remaining attributes
+        - Find matching close tag
+        - Generate transformed template
+        - Handle multiple directives on same element
+        - Process recursively for nested directives
+      </tasks>
+    </step>
+
+    <step number="5">
+      <title>Integrate into compilation pipeline</title>
+      <tasks>
+        - Call preprocessor at start of compile_template_string()
+        - Ensure preprocessing happens before shorthand conversion
+        - Respect attribute_directives config option
+      </tasks>
+    </step>
+
+    <step number="6">
+      <title>Implement escape handling</title>
+      <tasks>
+        - Detect \@ and @@ escape sequences
+        - Convert to placeholder before processing
+        - Restore to literal @ after processing
+      </tasks>
+    </step>
+
+    <step number="7">
+      <title>Add error handling</title>
+      <tasks>
+        - Detect unclosed elements with directives
+        - Report line numbers in errors
+        - Validate directive syntax (non-empty, valid foreach, etc.)
+        - Provide helpful error messages
+      </tasks>
+    </step>
+
+    <step number="8">
+      <title>Write comprehensive tests</title>
+      <tasks>
+        - Create t/attribute_directives.t
+        - Test all directive types
+        - Test self-closing tags
+        - Test nesting scenarios
+        - Test combined directives
+        - Test edge cases
+        - Test error conditions
+        - Test integration with other features
+      </tasks>
+    </step>
+
+    <step number="9">
+      <title>Update documentation</title>
+      <tasks>
+        - Add section to main POD
+        - Document all supported directives
+        - Provide examples
+        - Document escape mechanism
+        - Document configuration options
+        - Update CLAUDE.md
+      </tasks>
+    </step>
+  </implementation_steps>
+
+  <future_considerations>
+    <consideration name="else_support">
+      <description>
+        Consider @else and @elsif directives for conditional chains.
+        Challenging because they need to be siblings, not nested.
+      </description>
+      <potential_syntax>
+        ```html
+        <p @if="$type eq 'a'">Type A</p>
+        <p @elsif="$type eq 'b'">Type B</p>
+        <p @else>Other type</p>
+        ```
+      </potential_syntax>
+      <complexity>High - requires tracking state between siblings</complexity>
+    </consideration>
+
+    <consideration name="class_directive">
+      <description>
+        Conditional class application similar to Vue's :class binding.
+      </description>
+      <potential_syntax>
+        ```html
+        <div @class="active: $is_active, error: $has_error">
+        <!-- Outputs: <div class="active error"> when both true -->
+        ```
+      </potential_syntax>
+    </consideration>
+
+    <consideration name="attr_directive">
+      <description>
+        Conditional attribute presence.
+      </description>
+      <potential_syntax>
+        ```html
+        <input @attr:disabled="$is_locked" />
+        <!-- Outputs: <input disabled> or <input> -->
+        ```
+      </potential_syntax>
+    </consideration>
+
+    <consideration name="text_directive">
+      <description>
+        Shorthand for text content without expression syntax.
+      </description>
+      <potential_syntax>
+        ```html
+        <span @text="$user->name"></span>
+        <!-- Same as: <span><%= $user->name %></span> -->
+        ```
+      </potential_syntax>
+    </consideration>
+
+    <consideration name="show_directive">
+      <description>
+        Always render element but control visibility via style attribute.
+        Useful for CSS transitions.
+      </description>
+      <potential_syntax>
+        ```html
+        <div @show="$visible">Content</div>
+        <!-- Outputs: <div style="display:none"> when $visible is false -->
+        ```
+      </potential_syntax>
+    </consideration>
+  </future_considerations>
+
+  <success_criteria>
+    <criterion>All basic directives (@if, @unless, @foreach, @for, @while, @with) work correctly</criterion>
+    <criterion>Self-closing and void elements handled properly</criterion>
+    <criterion>Nested same-name elements find correct closing tag</criterion>
+    <criterion>Multiple directives can be combined on single element</criterion>
+    <criterion>Directive values support full Perl expression syntax</criterion>
+    <criterion>Escape mechanism allows literal @ attributes</criterion>
+    <criterion>Clear error messages with line numbers for malformed templates</criterion>
+    <criterion>No performance regression for templates without directives</criterion>
+    <criterion>Integration with existing features (auto_escape, interpolation, etc.)</criterion>
+    <criterion>Comprehensive test coverage</criterion>
+    <criterion>Complete documentation with examples</criterion>
+  </success_criteria>
+</project_specification>

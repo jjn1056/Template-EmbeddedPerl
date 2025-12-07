@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(tree:*)",
+      "Bash(prove -lv:*)",
+      "Bash(perl:*)",
+      "Bash(prove -l:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
