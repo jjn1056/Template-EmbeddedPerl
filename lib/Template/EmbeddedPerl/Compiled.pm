@@ -7,8 +7,16 @@ use Template::EmbeddedPerl::Utils 'generate_error_message';
 sub render {
   my ($self, @args) = @_;
   my $output;
-  eval { $output = $self->{code}->(@args); 1 } or do {
-    die generate_error_message($@, $self->{template});
+  my $ok;
+  my $error;
+  {
+    no warnings 'once';
+    local $Template::EmbeddedPerl::ACTIVE_RENDERER = $self->{yat};
+    $ok = eval { $output = $self->{code}->(@args); 1 };
+    $error = $@ unless $ok;
+  }
+  $ok or do {
+    die generate_error_message($error, $self->{template}, $self->{source});
   };
   return $output;
 }
@@ -44,5 +52,3 @@ See L<Template::EmbeddedPerl>
 See L<Template::EmbeddedPerl>
  
 =cut
-
-

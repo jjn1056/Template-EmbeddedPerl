@@ -16,6 +16,8 @@ use Template::EmbeddedPerl::Utils qw(normalize_linefeeds generate_error_message)
 use Template::EmbeddedPerl::SafeString;
 use Regexp::Common qw /balanced/;
 
+our $ACTIVE_RENDERER;
+
 # used for the variable interpolation feature
 my $balanced_parens   = $RE{balanced}{-parens => '()'};
 my $balanced_brackets = $RE{balanced}{-parens => '[]'};
@@ -160,8 +162,15 @@ sub new {
 
 sub inject_helpers {
   my ($self) = @_;
+  my $sandbox_ns = $self->{sandbox_ns};
+  die "Invalid sandbox namespace '$sandbox_ns'"
+    unless defined($sandbox_ns) && $sandbox_ns =~ /\A[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*\z/;
+
   my %helpers = $self->get_helpers;
   foreach my $helper(keys %helpers) {
+    die "Invalid template helper name '$helper'"
+      unless $helper =~ /\A[A-Za-z_]\w*\z/;
+
     if($self->{sandbox_ns}->can($helper)) {
       warn "Skipping injection of helper '$helper'; already exists in namespace $self->{sandbox_ns}" 
         if $ENV{DEBUG_TEMPLATE_EMBEDDED_PERL};
@@ -169,9 +178,21 @@ sub inject_helpers {
     }
     eval qq[
       package @{[ $self->{sandbox_ns} ]};
-      sub $helper { \$self->get_helpers('$helper')->(\$self, \@_) }
+      sub $helper {
+        my \$renderer = Template::EmbeddedPerl->_current_render_context('$helper');
+        \$renderer->get_helpers('$helper')->(\$renderer, \@_);
+      }
     ]; die $@ if $@;
   }
+}
+
+sub _current_render_context {
+  my ($class, $helper) = @_;
+  my $renderer = $ACTIVE_RENDERER;
+
+  die "Template helper '$helper' called outside render context" unless $renderer;
+
+  return $renderer;
 }
 
 sub get_helpers {
@@ -215,9 +236,9 @@ sub from_string {
 
   my $digest;
   if($self->{use_cache}) {
+    $self->{compiled_cache} ||= {};
     $digest = Digest::MD5::md5_hex($template);
     if(my $cached = $self->{compiled_cache}->{$digest}) {
-      return $self->{compiled_cache}->{$digest};
       return bless {
         template => $cached->{template},
         parsed => $cached->{parsed},
@@ -254,21 +275,26 @@ sub from_string {
 sub from_data {
   my ($proto, $package, @args) = @_;
 
-  eval "require $package;"; if ($@) {
+  die "Invalid package name '$package'"
+    unless defined($package) && $package =~ /\A[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*\z/;
+
+  my $package_file = $package;
+  $package_file =~ s{::}{/}g;
+  eval { require "${package_file}.pm"; 1 }; if ($@) {
     die "Failed to load package '$package': $@";
   }
 
   my $data_handle = do { no strict 'refs'; *{"${package}::DATA"}{IO} };
   if (defined $data_handle) {
-    #my $position = tell( $data_handle );
+    my $position = tell($data_handle);
     my $data_content = do { local $/; <$data_handle> };
-    #seek $data_handle, $position, 0;
-    my $package_file = $package;
-    $package_file =~ s/::/\//g;
+    seek($data_handle, $position, 0)
+      or die "Failed to restore __DATA__ handle for package '$package': $!"
+      if defined($position) && $position >= 0;
     my $path = $INC{"${package_file}.pm"};
-    return $proto->from_string($data_content, @args, source => "${path}/DATA");
+    return $proto->from_string($data_content, @args, source => "@{[ $path || $package ]}/DATA");
   } else {
-    print "No __DATA__ section found in package $package.\n";
+    die "No __DATA__ section found in package '$package'";
   }
 }
 
@@ -284,10 +310,12 @@ sub from_file {
   my ($proto, $file_proto, @args) = @_;
   my $self = ref($proto) ? $proto : $proto->new(@args);
   my $file = "${file_proto}.@{[ $self->{template_extension} ]}";
+  my @directories = map {
+    (ref($_)||'') eq 'ARRAY' ? File::Spec->catdir(@$_) : $_
+  } @{ $self->{directories} };
 
   # find if it exists in the directories
-  foreach my $dir (@{ $self->{directories} }) {
-    $dir = File::Spec->catdir(@$dir) if ((ref($dir)||'') eq 'ARRAY');
+  foreach my $dir (@directories) {
     my $path = File::Spec->catfile($dir, $file);
     if (-e $path) {
       open my $fh, '<', $path or die "Failed to open file $path: $!";
@@ -295,7 +323,7 @@ sub from_file {
       return $self->from_fh($fh, %args);
     }
   }
-  die "File $file not found in directories: @{[ join ', ', @{ $proto->{directories} } ]}";
+  die "File $file not found in directories: @{[ join ', ', @directories ]}";
 }
 
 # Methods to parse and compile the template
@@ -307,20 +335,22 @@ sub parse_template {
   my $expr_marker = $self->{expr_marker};
   my $line_start = $self->{line_start};
   my $comment_mark = $self->{comment_mark};
+  my $trim_close_tag = "-${close_tag}";
+  my $expr_trim_close_tag = "${expr_marker}${close_tag}";
 
   ## support shorthand line start tags ##
 
   # Convert all lines starting with %= to start with <%= and then add %> to the end
-  $template =~ s/^\s*${line_start}${expr_marker}(.*?)(?=\\?$)/${open_tag}${expr_marker}$1${close_tag}/mg;
+  $template =~ s{^\s*\Q${line_start}${expr_marker}\E(.*?)(?=\\?$)}{${open_tag}${expr_marker}$1${close_tag}}mg;
   # Convert all lines starting with % to start with <% and then add %> to the end
-  # Use negative lookahead (?!>\s*\\?$) to exclude %> closing tag from conversion
-  $template =~ s/^\s*${line_start}(?!>\s*\\?$)(.*?)(?=\\?$)/${open_tag}$1${close_tag}/mg;
+  # Exclude lines containing only the closing tag from conversion.
+  $template =~ s{^\s*(?!\Q${close_tag}\E\s*\\?$)\Q${line_start}\E(.*?)(?=\\?$)}{${open_tag}$1${close_tag}}mg;
 
   ## Escapes so you can actually have % and %= in the template
   # Convert all lines starting with \%= to start instead with %=
-  $template =~ s/^\s*\\${line_start}${expr_marker}(.*)$/${line_start}${expr_marker}$1/mg;
+  $template =~ s{^\s*\\\Q${line_start}${expr_marker}\E(.*)$}{${line_start}${expr_marker}$1}mg;
   # Convert all lines starting with \% to start instead with %
-  $template =~ s/^\s*\\${line_start}(.*)$/${line_start}$1/mg;
+  $template =~ s{^\s*\\\Q${line_start}\E(.*)$}{${line_start}$1}mg;
 
   # This code parses the template and returns an array of parsed blocks.
   # Each block is represented as an array reference with two elements: the type and the content.
@@ -332,20 +362,30 @@ sub parse_template {
   #my @segments = split /(\Q${open_tag}\E.*?\Q${close_tag}\E)/s, $template;
   my @segments = split /((?<!\\)\Q${open_tag}\E.*?(?<!\\)\Q${close_tag}\E)/s, $template;
   my @parsed = ();
+  my $trim_next_text = 0;
 
   foreach my $segment (@segments) {
 
-    my ($open_type, $content, $close_type) = ($segment =~ /^(\Q${open_tag}${expr_marker}\E|\Q$open_tag\E)(.*?)(\Q${expr_marker}${close_tag}\E|\Q$close_tag\E)?$/s);
+    my ($open_type, $content, $close_type) = ($segment =~ /^(\Q${open_tag}${expr_marker}\E|\Q$open_tag\E)(.*?)(\Q${trim_close_tag}\E|\Q${expr_trim_close_tag}\E|\Q$close_tag\E)?$/s);
     if(!$open_type) {
+      if($trim_next_text) {
+        $trim_next_text = 0;
+        if($segment =~ s/\A[ \t]*\n//) {
+          $segment = "\\\n$segment";
+        } else {
+          $segment =~ s/\A[ \t]*\z//;
+        }
+      }
+
       # Remove \ from escaped line_start, open_tag, and close_tag
-      $segment =~ s/\\${line_start}/${line_start}/g;
-      $segment =~ s/\\${open_tag}/${open_tag}/g;
-      $segment =~ s/\\${close_tag}/${close_tag}/g;
-      $segment =~ s/\\${expr_marker}${close_tag}/${expr_marker}${close_tag}/g;
+      $segment =~ s{\\\Q${line_start}\E}{${line_start}}g;
+      $segment =~ s{\\\Q${open_tag}\E}{${open_tag}}g;
+      $segment =~ s{\\\Q${close_tag}\E}{${close_tag}}g;
+      $segment =~ s{\\\Q${expr_marker}${close_tag}\E}{${expr_marker}${close_tag}}g;
 
       # check the segment for comment lines 
-      $segment =~ s/^[ \t]*?${comment_mark}.*?(\\?)$/$1/mg; 
-      $segment =~ s/^[ \t]*?\\${comment_mark}/${comment_mark}/mg;
+      $segment =~ s{^[ \t]*?\Q${comment_mark}\E.*?(\\?)$}{$1}mg;
+      $segment =~ s{^[ \t]*?\\\Q${comment_mark}\E}{${comment_mark}}mg;
 
       if($self->{interpolation}) {
         my @parts = ();
@@ -380,17 +420,21 @@ sub parse_template {
         push @parsed, ['text', $segment];
       }
     } else {
+      $trim_next_text = 0 if $trim_next_text;
+
       # Support trim with =%>
-      $content = "trim $content" if $close_type eq "${expr_marker}${close_tag}";
+      $content = "trim $content"
+        if $open_type eq "${open_tag}${expr_marker}" && $close_type eq $expr_trim_close_tag;
+      $trim_next_text = 1 if $close_type eq $trim_close_tag;
 
       # ?? ==%> or maybe something else...
       # $parsed[-1][1] =~s/[ \t]+$//mg if $close_type eq "${expr_marker}${close_tag}";
  
       # Remove \ from escaped line_start, open_tag, and close_tag
-      $content =~ s/\\${line_start}/${line_start}/g;
-      $content =~ s/\\${open_tag}/${open_tag}/g;
-      $content =~ s/\\${close_tag}/${close_tag}/g;
-      $content =~ s/\\${expr_marker}${close_tag}/${expr_marker}${close_tag}/g;
+      $content =~ s{\\\Q${line_start}\E}{${line_start}}g;
+      $content =~ s{\\\Q${open_tag}\E}{${open_tag}}g;
+      $content =~ s{\\\Q${close_tag}\E}{${close_tag}}g;
+      $content =~ s{\\\Q${expr_marker}${close_tag}\E}{${expr_marker}${close_tag}}g;
 
       if ($open_type eq "${open_tag}${expr_marker}") {
         push @parsed, ['expr', tokenize($content)];
@@ -602,8 +646,8 @@ C<Template::EmbeddedPerl> is a template engine that allows you to embed Perl cod
 within template files or strings. It provides methods for creating templates
 from various sources, including strings, file handles, and data sections.
 
-The module also supports features like helper functions, automatic escaping, 
-and customizable sandbox environments.
+The module also supports features like helper functions, automatic escaping,
+and customizable template compilation namespaces.
 
 Its quite similar to L<Mojo::Template> and other embedded Perl template engines
 but its got one trick the others can't do (see L<EXCUSE> below).
@@ -718,8 +762,14 @@ You can add '=' to the closing tag to indicate that the expression should be tri
 and trailing whitespace. This is useful when you want to include the expression in a block of text.
 where you don't want the whitespace to affect the output.
 
-  <% Perl code =%>
   <%= Perl expression, replaced with result, trimmed =%>
+
+You can add '-' to the closing tag to trim whitespace after the tag through the next
+newline. This is useful when a readable code block should not emit a leading newline
+before the next element, for example in partial HTML responses.
+
+  <% Perl code -%>
+  <%= Perl expression, replaced with result -%>
 
 If you want to skip the newline after the closing tag you can use a backslash.
 
@@ -803,10 +853,10 @@ The marker indicating a template expression. Default is C<< '=' >>.
 
 =item * C<sandbox_ns>
 
-The namespace for the sandbox environment. Default is C<< 'Template::EmbeddedPerl::Sandbox' >>.
-Basically the template is compiled into an anponymous subroutine and this is the namespace
-that subroutine is executed in.  This is a security feature to prevent the template from
-accessing the outside environment.
+The namespace where templates are compiled. Default is C<< 'Template::EmbeddedPerl::Sandbox' >>.
+This isolates unqualified symbols but is not a security boundary: templates execute arbitrary
+Perl and can access modules, files, processes, and application globals. Only compile templates
+from trusted sources.
 
 =item * C<directories>
 
@@ -1145,8 +1195,9 @@ Encodes a string for use in a URL.
 
 =item * C<escape_javascript>
 
-Escapes JavaScript entities in a string. Useful for making strings safe to use
- in JavaScript.
+Escapes a value for use inside a JavaScript string, including preventing a closing
+C<script> tag from terminating an enclosing HTML script element. This is not a general
+JavaScript sanitizer; use a context-appropriate sanitizer for untrusted code.
 
 =item * C<trim>
 
@@ -1231,4 +1282,3 @@ __END__
   }->();
 }
 %= "BB: $bb"
-

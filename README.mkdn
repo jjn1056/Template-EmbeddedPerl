@@ -42,8 +42,8 @@ and data sections.  See the rest of the docs for more information.
 within template files or strings. It provides methods for creating templates
 from various sources, including strings, file handles, and data sections.
 
-The module also supports features like helper functions, automatic escaping, 
-and customizable sandbox environments.
+The module also supports features like helper functions, automatic escaping,
+and customizable template compilation namespaces.
 
 Its quite similar to [Mojo::Template](https://metacpan.org/pod/Mojo%3A%3ATemplate) and other embedded Perl template engines
 but its got one trick the others can't do (see [EXCUSE](https://metacpan.org/pod/EXCUSE) below).
@@ -157,8 +157,14 @@ You can add '=' to the closing tag to indicate that the expression should be tri
 and trailing whitespace. This is useful when you want to include the expression in a block of text.
 where you don't want the whitespace to affect the output.
 
-    <% Perl code =%>
     <%= Perl expression, replaced with result, trimmed =%>
+
+You can add '-' to the closing tag to trim whitespace after the tag through the next
+newline. This is useful when a readable code block should not emit a leading newline
+before the next element, for example in partial HTML responses.
+
+    <% Perl code -%>
+    <%= Perl expression, replaced with result -%>
 
 If you want to skip the newline after the closing tag you can use a backslash.
 
@@ -214,10 +220,10 @@ Creates a new `Template::EmbeddedPerl` object. Accepts the following arguments:
 
 - `sandbox_ns`
 
-    The namespace for the sandbox environment. Default is `'Template::EmbeddedPerl::Sandbox'`.
-    Basically the template is compiled into an anponymous subroutine and this is the namespace
-    that subroutine is executed in.  This is a security feature to prevent the template from
-    accessing the outside environment.
+    The namespace where templates are compiled. Default is `'Template::EmbeddedPerl::Sandbox'`.
+    This isolates unqualified symbols but is not a security boundary: templates execute arbitrary
+    Perl and can access modules, files, processes, and application globals. Only compile templates
+    from trusted sources.
 
 - `directories`
 
@@ -446,8 +452,9 @@ The module provides a set of default helper functions that can be used in templa
 
 - `escape_javascript`
 
-    Escapes JavaScript entities in a string. Useful for making strings safe to use
-     in JavaScript.
+    Escapes a value for use inside a JavaScript string, including preventing a closing
+    `script` tag from terminating an enclosing HTML script element. This is not a general
+    JavaScript sanitizer; use a context-appropriate sanitizer for untrusted code.
 
 - `trim`
 

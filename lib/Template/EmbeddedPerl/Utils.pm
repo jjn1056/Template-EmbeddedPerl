@@ -49,6 +49,7 @@ sub escape_javascript {
     $escaped =~ s/`/\\`/g;   # Escape backticks
     $escaped =~ s/\$/\\\$/g; # Escape dollar signs
     $escaped =~ s/'/\\'/g;   # Escape single quotes
+    $escaped =~ s{</}{<\\/}g; # Prevent closing an enclosing script element
 
     return $escaped;
 }
@@ -62,6 +63,8 @@ sub generate_error_message {
 
   my @files;
   push @files, [$1, $2, $3, $msg] while $msg =~ /^(.+?) at\s+(.+?)\s+line\s+(\d+)/gm;
+
+  return $msg unless @files;
 
   my $text = '';
   foreach my $file (@files) {
@@ -81,7 +84,7 @@ sub generate_error_message {
     $text .= "\n";
   }
 
-  return "$text\n";
+  return length($text) ? "$text\n" : $msg;
 }
 
 1;
@@ -113,12 +116,9 @@ Escape the uri string.
 
   my $escaped = escape_javascript($javascript);
 
-Escape the javascript string.  This basically takes a string and escapes it so that it can be 
-embedded in a JavaScript string.  So it escapes single quotes, backticks, and dollar signs and
-that sort of this.   It is not guaranteed to protect against all forms of XSS attacks.  If you
-are embedding user input in a JavaScript string, you should be sure to have cleaned that first
-probably using HTML or URI escaping, or running the string through a JavaScript sanitizer to
-remove any potentially harmful code.
+Escape a value so that it can be embedded in a JavaScript string. This escapes quotes,
+backticks, dollar signs, JSON control characters, and closing HTML tags. It is not a
+general JavaScript sanitizer and does not make untrusted JavaScript code safe to execute.
 
 =head2 generate_error_message
 
