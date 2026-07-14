@@ -267,7 +267,10 @@ sub from_string {
 
   my @template = split(/\n/, $template);
   my ($rewritten_template) = eval {
-    Template::EmbeddedPerl::Arguments->rewrite($template);
+    Template::EmbeddedPerl::Arguments->rewrite(
+      $template,
+      comment_mark => $self->{comment_mark},
+    );
   };
   if ($@) {
     my $error = $@;

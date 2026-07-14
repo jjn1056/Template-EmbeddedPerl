@@ -31,6 +31,17 @@ is(
     'expression defaults see earlier arguments and the original argument list',
 );
 
+my $nested_defaults = $engine->from_string(<<'EPL');
+% args $items = [1, 2], $labels = { first => 'A', second => 'B' }, $joined = join('-', 'x', 'y')
+<%= join(':', @$items, $labels->{first}, $labels->{second}, $joined) %>
+EPL
+
+is(
+    $nested_defaults->render,
+    "1:2:A:B:x-y\n",
+    'nested commas in array, hash, and call defaults do not split declarations',
+);
+
 my $legacy_engine = Template::EmbeddedPerl->new;
 is(
     $legacy_engine->from_string("% args \$name\n<%= \$name %>\n")->render(name => 'Jane'),
@@ -86,6 +97,19 @@ throws_ok {
     $compiled->render(name => 'Jane', 'odd');
 } qr/Odd template argument list/;
 
+my $source_validation = $engine->from_string(
+    "% args \$name\n<%= \$name %>\n",
+    source => 'views/argument-validation.epl',
+);
+
+throws_ok {
+    $source_validation->render(name => 'Jane', 'odd');
+} qr/Odd template argument list at views\/argument-validation\.epl line 1/;
+
+throws_ok {
+    $source_validation->render(name => 'Jane', name => 'John');
+} qr/Duplicate template argument 'name' at views\/argument-validation\.epl line 1/;
+
 my $multiline = $engine->from_string(<<'EPL');
 # argument declaration follows a template comment
 
@@ -103,17 +127,72 @@ is(
     'comments and blank lines may precede a multiline declaration',
 );
 
+my $custom_comment_engine = Template::EmbeddedPerl->new(
+    smart_lines => 1,
+    comment_mark => '//',
+);
+my $custom_comment;
+lives_ok {
+    $custom_comment = $custom_comment_engine->from_string(<<'EPL');
+// custom template comment
+
+% args $name
+<%= $name %>
+EPL
+} 'configured template comments allow args to compile';
+
+is(
+    $custom_comment && $custom_comment->render(name => 'Jane'),
+    "\n\nJane\n",
+    'configured template comments may precede args',
+);
+
 throws_ok {
-    $engine->from_string("text\n% args \$name\n");
-} qr/args must be the first executable directive/;
+    $custom_comment_engine->from_string(
+        "# visible text\n% args \$name\n",
+        source => 'views/custom-comment-late-args.epl',
+    );
+} qr/args must be the first executable directive at views\/custom-comment-late-args\.epl line 2/;
+
+throws_ok {
+    $engine->from_string(
+        "text\n% args \$name\n",
+        source => 'views/late-args.epl',
+    );
+} qr/args must be the first executable directive at views\/late-args\.epl line 2/;
 
 throws_ok {
     $engine->from_string("% my \$before = 1\n% args \$name\n");
 } qr/args must be the first executable directive/;
 
 throws_ok {
-    $engine->from_string("% args \$name\n% args \$other\n");
-} qr/args directive may only appear once/;
+    $engine->from_string(
+        "% args \$name\n% args \$other\n",
+        source => 'views/duplicate-args.epl',
+    );
+} qr/args directive may only appear once at views\/duplicate-args\.epl line 2/;
+
+for my $name (qw(__named_args __context _O self)) {
+    throws_ok {
+        $engine->from_string(
+            "% args \$$name\n",
+            source => "views/reserved-$name.epl",
+        );
+    } qr/Template argument '\Q$name\E' uses a reserved compiler identifier at views\/reserved-\Q$name\E\.epl line 1/;
+}
+
+for my $declaration (
+    q{% args $name = 1; die "discarded"},
+    q{% args $name = 1; $other = 2},
+    q{% args $name = 1;},
+) {
+    throws_ok {
+        $engine->from_string(
+            "$declaration\n<%= \$name %>\n",
+            source => 'views/extra-args-statement.epl',
+        );
+    } qr/invalid args directive at views\/extra-args-statement\.epl line 1/;
+}
 
 for my $case (
     [q{% args @items}, qr/scalar argument/],

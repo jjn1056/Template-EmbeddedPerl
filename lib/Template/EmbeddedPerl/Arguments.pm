@@ -5,8 +5,11 @@ use warnings;
 
 use PPI::Document;
 
+my %RESERVED_ARGUMENT = map { $_ => 1 } qw(__named_args __context _O self);
+
 sub rewrite {
-    my ($class, $template) = @_;
+    my ($class, $template, %args) = @_;
+    my $comment_mark = exists $args{comment_mark} ? $args{comment_mark} : '#';
     my @lines = $template =~ /.*?(?:\n|\z)/g;
     pop @lines if @lines && $lines[-1] eq '';
 
@@ -15,7 +18,9 @@ sub rewrite {
 
     my $start = $directive_lines[0];
     for my $line_number (0 .. $start - 1) {
-        next if $lines[$line_number] =~ /^[ \t]*(?:#[^\n]*)?(?:\n|\z)$/;
+        next if $lines[$line_number] =~ /^[ \t]*(?:\n|\z)$/;
+        next if defined($comment_mark) && length($comment_mark)
+            && $lines[$line_number] =~ /^[ \t]*\Q$comment_mark\E[^\n]*(?:\n|\z)$/;
         _error('args must be the first executable directive', $start + 1);
     }
 
@@ -77,7 +82,11 @@ sub _is_complete {
 sub _generate_bindings {
     my ($declaration, $line) = @_;
     my ($document, $list, $expression) = _parse_declaration($declaration);
-    _error('invalid args directive', $line) unless $document && $list && $expression;
+    _error('invalid args directive', $line)
+        unless $document
+            && $list
+            && $expression
+            && _is_wholly_consumed($document, $list, $expression);
 
     my @parts;
     my @part;
@@ -102,6 +111,8 @@ sub _generate_bindings {
             unless $symbol->isa('PPI::Token::Symbol')
                 && $symbol->content =~ /^\$([A-Za-z_]\w*)\z/;
         my $name = $1;
+        _error("Template argument '$name' uses a reserved compiler identifier", $line)
+            if $RESERVED_ARGUMENT{$name};
         _error("Duplicate args declaration '$name'", $line) if $seen{$name}++;
 
         my ($symbol_index) = grep { $part->[$_] == $symbol } 0 .. $#$part;
@@ -140,6 +151,29 @@ sub _is_anonymous_sub {
     return 0 unless $elements[-1]->isa('PPI::Structure::Block');
     return 1 if @elements == 2;
     return $elements[1]->isa('PPI::Structure::List');
+}
+
+sub _is_wholly_consumed {
+    my ($document, $list, $expression) = @_;
+    my $statement = $document->schild(0) or return 0;
+    return 0 unless $statement->isa('PPI::Statement::Variable');
+    return 0 if $document->schild(1);
+
+    my $keyword = $statement->schild(0) or return 0;
+    return 0 unless $keyword->isa('PPI::Token::Word') && $keyword->content eq 'my';
+    return 0 unless $statement->schild(1) == $list;
+
+    my $terminator = $statement->schild(2) or return 0;
+    return 0 unless $terminator->isa('PPI::Token::Structure')
+        && $terminator->content eq ';';
+    return 0 if $statement->schild(3);
+
+    return 0 unless $list->schild(0) == $expression;
+    return 0 if $list->schild(1);
+    return 0 if grep {
+        $_->isa('PPI::Token::Structure') && $_->content eq ';'
+    } $expression->children;
+    return 1;
 }
 
 sub _parse_declaration {
