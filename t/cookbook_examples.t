@@ -59,4 +59,82 @@ is(
     'untyped command-line example renders expected HTML',
 );
 
+sub read_file {
+    my ($path) = @_;
+    open my $fh, '<', $path or die "Cannot read $path: $!";
+    local $/;
+    my $content = <$fh>;
+    close $fh or die "Cannot close $path: $!";
+    return $content;
+}
+
+my $tutorial_path = File::Spec->catfile(
+    $root, qw(lib Template EmbeddedPerl Tutorial.pod),
+);
+ok(-e $tutorial_path, 'installed tutorial POD exists');
+
+my $tutorial = -e $tutorial_path ? read_file($tutorial_path) : '';
+for my $heading (
+    'FIRST TEMPLATE',
+    'THE CONTACTS APPLICATION',
+    'SMART LINES AND NAMED ARGUMENTS',
+    'DEFAULTS AND LAZY DEFAULTS',
+    'ESCAPING HTML SAFELY',
+    'PARTIALS',
+    'LAYOUTS',
+    'NAMED CONTENT',
+    'APPLICATION HELPERS',
+    'DIAGNOSING FAILURES',
+    'REUSE AND PRODUCTION CONFIGURATION',
+    'CHOOSING THE NEXT ABSTRACTION',
+) {
+    like($tutorial, qr/^=head1 \Q$heading\E$/m, "tutorial contains $heading");
+}
+
+like(
+    $tutorial,
+    qr{examples/contacts/untyped/app\.pl},
+    'tutorial points to the runnable untyped application',
+);
+
+my $compile_error = eval {
+    Template::EmbeddedPerl->from_string(
+        "first\n<%= \$missing %>\n",
+        source => 'tutorial-compile.epl',
+    );
+    '';
+} || $@;
+like(
+    $compile_error,
+    qr/at tutorial-compile\.epl line 2/,
+    'tutorial compile failure reports its template source and line',
+);
+
+my $runtime_error = eval {
+    Template::EmbeddedPerl->from_string(
+        "first\n<% die 'tutorial runtime' %>\n",
+        source => 'tutorial-runtime.epl',
+    )->render;
+    '';
+} || $@;
+like(
+    $runtime_error,
+    qr/tutorial runtime at tutorial-runtime\.epl line 2/,
+    'tutorial runtime failure reports its template source and line',
+);
+
+my @warnings;
+{
+    local $SIG{__WARN__} = sub { push @warnings, @_ };
+    Template::EmbeddedPerl->from_string(
+        "first\n<% warn 'tutorial warning' %>\n",
+        source => 'tutorial-warning.epl',
+    )->render;
+}
+like(
+    join('', @warnings),
+    qr/tutorial warning at tutorial-warning\.epl line 2/,
+    'tutorial warning reports its template source and line',
+);
+
 done_testing;
