@@ -10,6 +10,7 @@ use utf8;
 use PPI::Document;
 use File::Spec;
 use Digest::MD5;
+use Encode qw(encode);
 use Scalar::Util;
 use Template::EmbeddedPerl::Arguments;
 use Template::EmbeddedPerl::Compiled;
@@ -349,7 +350,7 @@ sub from_string {
     $digest = Digest::MD5::md5_hex(
       $template,
       "\0template-source\0",
-      $diagnostic_source,
+      encode('UTF-8', $diagnostic_source),
     );
     if(my $cached = $self->{compiled_cache}->{$digest}) {
       return bless {

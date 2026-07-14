@@ -74,20 +74,16 @@ sub generate_error_message {
 
   $source = diagnostic_source_label($source);
 
-  my @files;
-  push @files, [$1, $2, $3, $msg] while $msg =~ /^(.+?) at\s+(.+?)\s+line\s+(\d+)/gm;
-
-  return $msg unless @files;
-
   my $text = '';
-  foreach my $file (@files) {
-    my ($message, $file_name, $line, $extra) = @$file;
-    my $is_template_file = $file_name =~ /\A\(eval \d+\)\z/
-      || $file_name eq $source;
-    if (!$is_template_file) {
-      $text .= $extra;
+  my $has_template_location = 0;
+  for my $diagnostic_line (split /(?<=\n)/, $msg) {
+    my ($message, $line) = _template_location($diagnostic_line, $source);
+    if (!defined $line) {
+      $text .= $diagnostic_line;
       next;
     }
+
+    $has_template_location = 1;
     $text .= "$message at $source line $line\n\n";
 
     $line--;
@@ -99,7 +95,19 @@ sub generate_error_message {
     $text .= "\n";
   }
 
-  return length($text) ? "$text\n" : $msg;
+  return $has_template_location ? $text : $msg;
+}
+
+sub _template_location {
+  my ($diagnostic_line, $source) = @_;
+  my $source_or_eval = qr/(?:\Q$source\E|\(eval \d+\))/;
+  my ($message, $line);
+
+  while ($diagnostic_line =~ /\s+at\s+$source_or_eval\s+line\s+(\d+)(?:\.\n?\z|,\s+at\s+EOF\n?\z)/g) {
+    ($message, $line) = (substr($diagnostic_line, 0, $-[0]), $1);
+  }
+
+  return ($message, $line);
 }
 
 sub decorate_render_error {

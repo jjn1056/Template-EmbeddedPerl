@@ -411,4 +411,120 @@ is(
     'smart expression output still consumes its trailing newline',
 );
 
+my $non_latin_source = "pages/\N{U+65E5}\N{U+672C}\N{U+8A9E}.epl";
+my $non_latin_cached = Template::EmbeddedPerl->new(use_cache => 1);
+my $non_latin_first = $non_latin_cached->from_string(
+    "rendered\n",
+    source => $non_latin_source,
+);
+my $non_latin_again = $non_latin_cached->from_string(
+    "rendered\n",
+    source => $non_latin_source,
+);
+is($non_latin_first->render, "rendered\n", 'a cached non-Latin source compiles and renders');
+is(
+    $non_latin_first->{code},
+    $non_latin_again->{code},
+    'a cached non-Latin source reuses its compiled coderef',
+);
+
+my $deceptive_location_error = runtime_failure(
+    Template::EmbeddedPerl->new,
+    '<% die "failed at pages/a.epl line 99" %>',
+    'pages/a.epl',
+);
+like(
+    $deceptive_location_error,
+    qr/failed at pages\/a\.epl line 99 at pages\/a\.epl line 1/,
+    'a message location-like substring is retained before the real physical location',
+);
+like(
+    $deceptive_location_error,
+    qr/1: <\% die "failed at pages\/a\.epl line 99" \%>/,
+    'the real physical location receives normal template context decoration',
+);
+
+my $line_in_source_error = runtime_failure(
+    Template::EmbeddedPerl->new,
+    q{<% die 'filename location' %>},
+    'pages/name line 17.epl',
+);
+reports_location(
+    $line_in_source_error,
+    'pages/name line 17.epl',
+    1,
+    'a source filename containing line digits reports its exact physical location',
+);
+like(
+    $line_in_source_error,
+    qr/1: <\% die 'filename location' \%>/,
+    'a source filename containing line digits receives normal template context decoration',
+);
+
+my $helper_location_error = runtime_failure(
+    Template::EmbeddedPerl->new(
+        helpers => {
+            native_location_failure => sub { die 'native helper failure' },
+        },
+    ),
+    '<% native_location_failure %>',
+    'pages/helper-location.epl',
+);
+like(
+    $helper_location_error,
+    qr/\Anative helper failure at \Q@{[ __FILE__ ]}\E line \d+\.\n/,
+    'a helper native location remains verbatim',
+);
+unlike(
+    $helper_location_error,
+    qr/at pages\/helper-location\.epl line/,
+    'a helper native location is not rewritten to the template source',
+);
+
+my $eof_location_error = Template::EmbeddedPerl::Utils::generate_error_message(
+    "syntax error at pages/eof.epl line 1, at EOF\n",
+    ['broken'],
+    'pages/eof.epl',
+);
+reports_location(
+    $eof_location_error,
+    'pages/eof.epl',
+    1,
+    'a native compile location ending in at EOF is decorated',
+);
+like(
+    $eof_location_error,
+    qr/1: broken/,
+    'an at EOF diagnostic receives normal template context decoration',
+);
+
+my $multiple_diagnostics = Template::EmbeddedPerl::Utils::generate_error_message(
+    "Global symbol \"\$missing\" requires explicit package name at pages/multiple.epl line 1.\n"
+        . "Execution of pages/multiple.epl aborted due to compilation errors.\n",
+    ['<%= $missing %>'],
+    'pages/multiple.epl',
+);
+reports_location(
+    $multiple_diagnostics,
+    'pages/multiple.epl',
+    1,
+    'a compile diagnostic location is decorated when followed by compiler detail',
+);
+like(
+    $multiple_diagnostics,
+    qr/Execution of pages\/multiple\.epl aborted due to compilation errors\./,
+    'a non-location compiler detail line is preserved verbatim',
+);
+
+my $non_native_location = "message at pages/eof.epl line 1\n";
+is(
+    Template::EmbeddedPerl::Utils::generate_error_message(
+        $non_native_location,
+        ['broken'],
+        'pages/eof.epl',
+    ),
+    $non_native_location,
+    'a location-like message without a native suffix remains verbatim',
+);
+
 done_testing;
