@@ -6,13 +6,24 @@ use Template::EmbeddedPerl::Utils 'generate_error_message';
 
 sub render {
   my ($self, @args) = @_;
+  my $context = $self->{yat}->_new_render_context(source => $self->{source});
+  my $entry = {
+    kind => 'root',
+    identifier => $self->{identifier} || $self->{source} || '<string>',
+    source => $self->{source},
+  };
+  return $self->_render_with_context($context, $entry, @args);
+}
+
+sub _render_with_context {
+  my ($self, $context, $entry, @args) = @_;
   my $output;
   my $ok;
   my $error;
   {
     no warnings 'once';
-    local $Template::EmbeddedPerl::ACTIVE_RENDERER = $self->{yat};
-    $ok = eval { $output = $self->{code}->(@args); 1 };
+    local $Template::EmbeddedPerl::ACTIVE_RENDERER = $context;
+    $ok = eval { $output = $self->{code}->($context, @args); 1 };
     $error = $@ unless $ok;
   }
   $ok or do {

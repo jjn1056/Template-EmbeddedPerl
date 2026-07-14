@@ -12,6 +12,8 @@ use File::Spec;
 use Digest::MD5;
 use Scalar::Util;
 use Template::EmbeddedPerl::Compiled;
+use Template::EmbeddedPerl::RenderContext;
+use Template::EmbeddedPerl::RenderFrame;
 use Template::EmbeddedPerl::Utils qw(normalize_linefeeds generate_error_message);
 use Template::EmbeddedPerl::SafeString;
 use Regexp::Common qw /balanced/;
@@ -179,8 +181,9 @@ sub inject_helpers {
     eval qq[
       package @{[ $self->{sandbox_ns} ]};
       sub $helper {
-        my \$renderer = Template::EmbeddedPerl->_current_render_context('$helper');
-        \$renderer->get_helpers('$helper')->(\$renderer, \@_);
+        my \$context = Template::EmbeddedPerl->_current_render_context('$helper');
+        my \$engine = \$context->engine;
+        \$engine->get_helpers('$helper')->(\$engine, \@_);
       }
     ]; die $@ if $@;
   }
@@ -188,11 +191,20 @@ sub inject_helpers {
 
 sub _current_render_context {
   my ($class, $helper) = @_;
-  my $renderer = $ACTIVE_RENDERER;
+  my $context = $ACTIVE_RENDERER;
 
-  die "Template helper '$helper' called outside render context" unless $renderer;
+  die "Template helper '$helper' called outside render context" unless $context;
 
-  return $renderer;
+  return $context;
+}
+
+sub _new_render_context {
+  my ($self, %args) = @_;
+  return Template::EmbeddedPerl::RenderContext->new(
+    engine => $self,
+    frame => Template::EmbeddedPerl::RenderFrame->new,
+    %args,
+  );
 }
 
 sub get_helpers {
@@ -494,7 +506,7 @@ sub compiled {
   my ($self, $compiled) = @_;
   my $wrapper = "package @{[ $self->{sandbox_ns} ]}; ";
   $wrapper .= "use strict; use warnings; use utf8; @{[ $self->{preamble} ]}; ";
-  $wrapper .= "sub { my \$_O = ''; @{[ $self->{prepend} ]}; ${compiled}; return \$_O; };";
+  $wrapper .= "sub { my \$__context = shift; my \$_O = ''; my \$self = \$__context->view; @{[ $self->{prepend} ]}; ${compiled}; return \$_O; };";
   return $wrapper;
 }
 
