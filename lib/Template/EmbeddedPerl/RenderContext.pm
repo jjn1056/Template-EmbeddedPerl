@@ -3,6 +3,8 @@ package Template::EmbeddedPerl::RenderContext;
 use strict;
 use warnings;
 
+use Carp 'croak';
+
 sub new {
     my ($class, %args) = @_;
     return bless \%args, $class;
@@ -17,6 +19,39 @@ sub source    { $_[0]->{source} }
 sub with {
     my ($self, %overrides) = @_;
     return ref($self)->new(%$self, %overrides);
+}
+
+sub named_arguments {
+    my ($self, $args) = @_;
+    croak 'Odd template argument list' if @$args % 2;
+
+    my @copy = @$args;
+    my %named;
+    while (@copy) {
+        my ($name, $value) = splice @copy, 0, 2;
+        croak "Duplicate template argument '$name'" if exists $named{$name};
+        $named{$name} = $value;
+    }
+    return \%named;
+}
+
+sub take_required_argument {
+    my ($self, $named, $name) = @_;
+    croak "Missing required template argument '$name'" unless exists $named->{$name};
+    return delete $named->{$name};
+}
+
+sub take_optional_argument {
+    my ($self, $named, $name, $factory) = @_;
+    return delete $named->{$name} if exists $named->{$name};
+    return $factory->();
+}
+
+sub assert_no_arguments {
+    my ($self, $named) = @_;
+    my @unknown = sort keys %$named;
+    croak "Unknown template argument '$unknown[0]'" if @unknown;
+    return;
 }
 
 1;

@@ -11,6 +11,7 @@ use PPI::Document;
 use File::Spec;
 use Digest::MD5;
 use Scalar::Util;
+use Template::EmbeddedPerl::Arguments;
 use Template::EmbeddedPerl::Compiled;
 use Template::EmbeddedPerl::RenderContext;
 use Template::EmbeddedPerl::RenderFrame;
@@ -265,7 +266,17 @@ sub from_string {
   $template = normalize_linefeeds($template);
 
   my @template = split(/\n/, $template);
-  my @parsed = $self->parse_template($template);
+  my ($rewritten_template) = eval {
+    Template::EmbeddedPerl::Arguments->rewrite($template);
+  };
+  if ($@) {
+    my $error = $@;
+    my $source_name = $source || 'unknown';
+    $error =~ s/ at template line (\d+)\n\z/ at $source_name line $1\n/;
+    die $error;
+  }
+
+  my @parsed = $self->parse_template($rewritten_template);
   my $code = $self->compile(\@template, $source, @parsed);
 
   if($self->{use_cache}) {
