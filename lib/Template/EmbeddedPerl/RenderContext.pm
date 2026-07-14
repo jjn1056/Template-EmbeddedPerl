@@ -7,6 +7,8 @@ use Carp 'croak';
 use Scalar::Util ();
 use Template::EmbeddedPerl::Utils 'decorate_render_error';
 
+our $SOURCE_OBSERVER;
+
 sub new {
     my ($class, %args) = @_;
     return bless \%args, $class;
@@ -35,14 +37,9 @@ sub render_file {
         },
         sub {
             my ($entry) = @_;
-            my $source = $self->engine->_resolve_template_file($identifier);
-            $entry->{source} = $source;
-            my $compiled = $self->engine->_from_resolved_file(
-                $identifier,
-                $source,
-            );
+            my $compiled = $self->_load_compiled_file($entry, $identifier);
             return $compiled->_execute_with_context(
-                $self->with(source => $source),
+                $self->with(source => $entry->{source}),
                 @args,
             );
         },
@@ -60,17 +57,20 @@ sub render_view_object {
         sub {
             my ($entry) = @_;
             my $template_identifier = $self->engine->_template_for_view($view, $self);
-            my $source = $self->engine->_resolve_template_file($template_identifier);
-            $entry->{source} = $source;
-            my $compiled = $self->engine->_from_resolved_file(
-                $template_identifier,
-                $source,
-            );
+            my $compiled = $self->_load_compiled_file($entry, $template_identifier);
             return $compiled->_execute_with_context(
-                $self->with(view => $view, source => $source),
+                $self->with(view => $view, source => $entry->{source}),
             );
         },
     );
+}
+
+sub _load_compiled_file {
+    my ($self, $entry, $identifier) = @_;
+    local $SOURCE_OBSERVER = sub { $entry->{source} = $_[0] };
+    my $compiled = $self->engine->from_file($identifier);
+    $entry->{source} = $compiled->{source} if defined $compiled->{source};
+    return $compiled;
 }
 
 sub execute_render {

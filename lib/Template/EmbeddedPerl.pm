@@ -429,6 +429,8 @@ sub from_file {
   my ($proto, $file_proto, @args) = @_;
   my $self = ref($proto) ? $proto : $proto->new(@args);
   my $path = $self->_resolve_template_file($file_proto);
+  $Template::EmbeddedPerl::RenderContext::SOURCE_OBSERVER->($path)
+    if $Template::EmbeddedPerl::RenderContext::SOURCE_OBSERVER;
   return $self->_from_resolved_file($file_proto, $path, @args);
 }
 

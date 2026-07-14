@@ -42,6 +42,46 @@ use Template::EmbeddedPerl;
     sub new { bless {}, $_[0] }
 }
 
+{
+    package Local::CompositionErrors::VirtualLoader;
+
+    our @ISA = ('Template::EmbeddedPerl');
+
+    sub from_file {
+        my ($proto, $identifier, @args) = @_;
+        my $self = ref($proto) ? $proto : $proto->new(@args);
+        push @{$self->{virtual_loads}}, $identifier;
+
+        die "Virtual template '$identifier' failed to load\n"
+            if $identifier eq 'virtual/fails';
+
+        my $template = $self->{virtual_templates}{$identifier};
+        die "Unknown virtual template '$identifier'\n" unless defined $template;
+
+        return $self->from_string(
+            $template,
+            @args,
+            source => "virtual://$identifier.epl",
+            identifier => $identifier,
+        );
+    }
+}
+
+{
+    package Local::CompositionErrors::VirtualView::HTML::Root;
+
+    sub new { bless {name => 'root', child => $_[1]}, $_[0] }
+    sub name { $_[0]->{name} }
+    sub child { $_[0]->{child} }
+}
+
+{
+    package Local::CompositionErrors::VirtualView::HTML::Child;
+
+    sub new { bless {name => 'child'}, $_[0] }
+    sub name { $_[0]->{name} }
+}
+
 sub write_fixture ($root, $identifier, $content) {
     my @parts = split m{/}, "$identifier.epl";
     my $file = File::Spec->catfile($root, @parts);
@@ -574,6 +614,65 @@ for my $case (
         $description,
     );
 }
+
+my $virtual_engine = Local::CompositionErrors::VirtualLoader->new(
+    directories => [],
+    view_namespace => 'Local::CompositionErrors::VirtualView',
+    virtual_loads => [],
+    virtual_templates => {
+        'html/root' => q{<% layout 'virtual/layout' %>root(<%= $self->name %>|<%= context_probe %>|<%= partial 'virtual/partial' %>|<%= view $self->child %>)},
+        'virtual/partial' => q{partial(<%= $self->name %>|<%= context_probe %>)},
+        'html/child' => q{child(<%= $self->name %>|<%= context_probe %>)},
+        'virtual/layout' => q{layout(<%= $self->name %>|<%= context_probe %>|<%= yield %>)},
+    },
+    helpers => {
+        context_probe => sub {
+            my $context = Template::EmbeddedPerl->_current_render_context('context_probe');
+            return join '/',
+                $context->view->name,
+                $context->root_view->name,
+                join('>', map { $_->{kind} } @{$context->frame->render_stack}),
+                $context->source;
+        },
+    },
+);
+my $virtual_root = Local::CompositionErrors::VirtualView::HTML::Root->new(
+    Local::CompositionErrors::VirtualView::HTML::Child->new,
+);
+is(
+    $virtual_engine->render_view($virtual_root),
+    'layout(root|root/root/root>layout/virtual://virtual/layout.epl|'
+        . 'root(root|root/root/root/virtual://html/root.epl|'
+        . 'partial(root|root/root/root>partial/virtual://virtual/partial.epl)|'
+        . 'child(child|child/root/root>view/virtual://html/child.epl)))',
+    'composition dispatches virtual root, partial, child, and layout templates with one lexical context frame',
+);
+is_deeply(
+    $virtual_engine->{virtual_loads},
+    ['html/root', 'virtual/partial', 'html/child', 'virtual/layout'],
+    'every composition path dispatches once through the public virtual loader',
+);
+
+my $virtual_failure_root = $virtual_engine->from_string(
+    q{<%= partial 'virtual/fails' %>},
+    source => 'virtual-failure-root.epl',
+    identifier => 'virtual-failure-root',
+);
+my $virtual_load_error = capture_failure(sub {
+    $virtual_failure_root->render;
+});
+assert_single_stack(
+    $virtual_load_error,
+    "Render stack:\n"
+        . "  root virtual-failure-root (virtual-failure-root.epl)\n"
+        . "  partial virtual/fails (unknown)\n",
+    'virtual loader failure',
+);
+is(
+    scalar(grep { $_ eq 'virtual/fails' } @{$virtual_engine->{virtual_loads}}),
+    1,
+    'a failing virtual loader is invoked once for one attempted render entry',
+);
 
 my $first_success = $engine->from_string(
     q{<% content_for css => sub { raw 'first css' }; %><%= yield 'css' %>},
