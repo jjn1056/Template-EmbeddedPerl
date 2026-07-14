@@ -287,7 +287,7 @@ sub _content_capture_arguments {
   my ($helper, @args) = @_;
   die "Invalid $helper arguments" unless @args == 2;
   my ($name, $callback) = @args;
-  die "Invalid $helper name" unless defined($name) && !ref($name);
+  die "Invalid $helper name" unless defined($name) && !ref($name) && length($name);
   die "Invalid $helper callback" unless ref($callback) eq 'CODE';
   return ($name, $callback);
 }
@@ -296,7 +296,7 @@ sub _content_name_arguments {
   my ($helper, @args) = @_;
   die "Invalid $helper arguments" unless @args == 1;
   my ($name) = @args;
-  die "Invalid $helper name" unless defined($name) && !ref($name);
+  die "Invalid $helper name" unless defined($name) && !ref($name) && length($name);
   return $name;
 }
 

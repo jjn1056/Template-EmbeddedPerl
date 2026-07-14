@@ -66,6 +66,30 @@ my $has_content = $engine->from_string(
 );
 is($has_content->render, 'nonoyes', 'has_content reports only nonempty named content');
 
+my $captured_blocks = $engine->from_string(<<'EPL', source => 'pages/captured-blocks.epl');
+<% my $value = '<data&>'; %>\
+<% layout 'layouts/slots'; %>\
+<% content_for css => sub { %>\
+<first><%= $value %></first>\
+<% } %>\
+<% content_replace css => sub { %>\
+<replacement><%= $value %></replacement>\
+<% } %>\
+<% content_for css => sub { %>\
+<after><%= $value %></after>\
+<% } %>\
+<main><%= $value %></main>
+EPL
+
+is(
+    $captured_blocks->render,
+    '<css safe="safe"><replacement>&lt;data&amp;&gt;</replacement>'
+        . '<after>&lt;data&amp;&gt;</after></css>'
+        . "<body><main>&lt;data&amp;&gt;</main>\n</body>"
+        . '<js safe="safe"></js><has-css>yes</has-css>',
+    'multiline content blocks escape inner data, replace before later appends, and stay out of the body',
+);
+
 my $callback_calls = 0;
 my $callback_once = $engine->from_string(
     q{<% my $calls = shift; content_for css => sub { ++$$calls; raw '<link href="once.css">' }; %><%= yield 'css' %>},
@@ -89,12 +113,50 @@ my $invalid_name = $engine->from_string(
 throws_ok { $invalid_name->render } qr/Invalid content_for name/,
     'content_for requires a defined string name';
 
+my @empty_name_helpers = (
+    [content_for => q{<% content_for '', sub { '' }; %>}],
+    [content_replace => q{<% content_replace '', sub { '' }; %>}],
+    [has_content => q{<%= has_content '' %>}],
+    [yield => q{<%= yield '' %>}],
+);
+for my $case (@empty_name_helpers) {
+    my ($helper, $source) = @$case;
+    my $template = $engine->from_string($source, source => "pages/empty-$helper-name.epl");
+    throws_ok { $template->render } qr/Invalid \Q$helper\E name/,
+        "$helper rejects an empty content name";
+}
+
 my $invalid_callback = $engine->from_string(
     q{<%= content_replace 'css', 'not a callback' %>},
     source => 'pages/invalid-content-callback.epl',
 );
 throws_ok { $invalid_callback->render } qr/Invalid content_replace callback/,
     'content_replace requires a code callback';
+
+my $failing_capture = $engine->from_string(<<'EPL', source => 'pages/failing-capture.epl');
+<% content_for css => sub { %>\
+<partial>uncommitted</partial>\
+<% die "capture failure\n"; } %>
+EPL
+my $failure_context = $engine->_new_render_context(source => 'pages/failing-capture.epl');
+throws_ok {
+    $failing_capture->_render_with_context(
+        $failure_context,
+        {
+            kind => 'root',
+            identifier => 'pages/failing-capture',
+            source => 'pages/failing-capture.epl',
+        },
+    );
+} qr/capture failure/, 'a failing capture propagates its callback error';
+is($failure_context->frame->content('css'), '', 'a failing capture stores no partial contribution');
+is($failure_context->frame->has_content('css'), 0, 'a failing capture leaves the named slot empty');
+
+my $after_failed_capture = $engine->from_string(
+    q{<%= yield 'css' %><%= has_content('css') ? 'yes' : 'no' %>},
+    source => 'pages/after-failing-capture.epl',
+);
+is($after_failed_capture->render, 'no', 'a subsequent top-level render remains clean after capture failure');
 
 my $first_frame = $engine->from_string(
     q{<% content_for css => sub { raw '<link href="first.css">' }; %><%= yield 'css' %>},
