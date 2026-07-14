@@ -51,8 +51,25 @@ Its quite similar to [Mojo::Template](https://metacpan.org/pod/Mojo%3A%3ATemplat
 but its got one trick the others can't do (see [EXCUSE](https://metacpan.org/pod/EXCUSE) below).
 
 For complete runnable examples of `smart_lines`, `args`, partials, layouts,
-named content blocks, ordered template directories, and typed views, see the
-[typed views cookbook](docs/cookbook/typed-views.md).
+named content blocks, ordered template directories, and typed views, follow
+the learning path below.
+
+# LEARNING PATH
+
+Start with the framework-neutral Contacts tutorial:
+
+    perldoc Template::EmbeddedPerl::Tutorial
+
+For copyable solutions to specific template tasks:
+
+    perldoc Template::EmbeddedPerl::Cookbook
+
+For the experimental typed-view and wrapper-view refactor:
+
+    perldoc Template::EmbeddedPerl::Cookbook::TypedViews
+
+The complete runnable applications are under `examples/contacts/untyped` and
+`examples/contacts/typed`.
 
 # ACKNOWLEDGEMENTS
 
@@ -159,8 +176,8 @@ template arguments:
     % args $name, $greeting = 'Hello'
     <p><%= $greeting %>, <%= $name %></p>
 
-The full composition and typed-view examples are in the
-[typed views cookbook](docs/cookbook/typed-views.md).
+The full composition and typed-view examples are in
+`Template::EmbeddedPerl::Cookbook::TypedViews`.
 
 You can add '=' to the closing tag to indicate that the expression should be trimmed of leading
 and trailing whitespace. This is useful when you want to include the expression in a block of text.
@@ -466,8 +483,8 @@ Passing a blessed value to this legacy API remains ordinary positional input in
 
 Renders a preconstructed blessed typed view object. In its template, lexical
 `$self` is the active view. Use the `view` helper for nested typed objects and
-the `partial` or `layout` helpers for untyped composition. See the
-[typed views cookbook](docs/cookbook/typed-views.md) for the resolver protocol,
+the `partial` or `layout` helpers for untyped composition. See
+`Template::EmbeddedPerl::Cookbook::TypedViews` for the resolver protocol,
 template precedence, and complete examples.
 
 # HELPER FUNCTIONS

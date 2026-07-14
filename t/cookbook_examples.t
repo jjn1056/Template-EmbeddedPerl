@@ -280,4 +280,40 @@ ok(
     'old Markdown cookbook is removed after migration',
 );
 
+my $readme = read_file(File::Spec->catfile($root, 'README.mkdn'));
+for my $document (
+    'Template::EmbeddedPerl::Tutorial',
+    'Template::EmbeddedPerl::Cookbook',
+    'Template::EmbeddedPerl::Cookbook::TypedViews',
+) {
+    like($readme, qr/perldoc \Q$document\E/, "README points to $document with perldoc");
+}
+unlike(
+    $readme,
+    qr{docs/cookbook/typed-views\.md},
+    'README no longer links to the pruned Markdown cookbook',
+);
+
+for my $relative (
+    'examples/contacts/untyped/app.pl',
+    'examples/contacts/untyped/lib/Contacts/Untyped/App.pm',
+    'examples/contacts/untyped/templates/pages/contacts.epl',
+    'examples/contacts/untyped/templates/contacts/item.epl',
+    'examples/contacts/untyped/templates/layouts/application.epl',
+    'examples/contacts/typed/app.pl',
+    'examples/contacts/typed/lib/Contacts/Typed/App.pm',
+    'examples/contacts/typed/lib/Contacts/Typed/View/HTML/ContactList.pm',
+    'examples/contacts/typed/lib/Contacts/Typed/View/HTML/Page.pm',
+    'examples/contacts/typed/lib/Contacts/Typed/View/HTML/ContactItem.pm',
+    'examples/contacts/typed/lib/Contacts/Typed/View/HTML/Badge.pm',
+    'examples/contacts/typed/templates/html/contact_list.epl',
+    'examples/contacts/typed/templates/html/page.epl',
+    'examples/contacts/typed/templates/contacts/item.epl',
+    'examples/contacts/typed/templates/contacts/badge.epl',
+    'examples/contacts/typed/templates/layouts/application.epl',
+) {
+    my $path = File::Spec->catfile($root, split m{/}, $relative);
+    ok(-e $path, "cookbook reference exists: $relative");
+}
+
 done_testing;
