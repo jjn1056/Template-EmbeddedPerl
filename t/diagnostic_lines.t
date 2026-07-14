@@ -159,4 +159,129 @@ is(
     'a warning ending in a newline retains native no-location behavior',
 );
 
+my %diagnostic_runner = (
+    compile => \&compile_failure,
+    runtime => \&runtime_failure,
+    warning => \&warning_message,
+);
+
+for my $case (
+    {
+        name => 'one continued comment',
+        kind => 'runtime',
+        template => "# one\\\n<% die 'one comment' %>\n",
+        line => 2,
+    },
+    {
+        name => 'two continued comments before a compile error',
+        kind => 'compile',
+        template => "# one\\\n# two\\\n<%= \$missing %>\n",
+        line => 3,
+    },
+    {
+        name => 'three continued comments before a runtime error',
+        kind => 'runtime',
+        template => "# one\\\n# two\\\n# three\\\n<% die 'three comments' %>\n",
+        line => 4,
+    },
+    {
+        name => 'continued comments before a warning',
+        kind => 'warning',
+        template => "# one\\\n# two\\\n<% warn 'comment warning' %>\n",
+        line => 3,
+    },
+    {
+        name => 'continued comments in the middle',
+        kind => 'runtime',
+        template => "head\n# one\\\n# two\\\ntail\n<% die 'middle comments' %>\n",
+        line => 5,
+    },
+) {
+    my $source = "comments-$case->{kind}.epl";
+    reports_location(
+        $diagnostic_runner{$case->{kind}}->(
+            Template::EmbeddedPerl->new,
+            $case->{template},
+            $source,
+        ),
+        $source,
+        $case->{line},
+        $case->{name},
+    );
+}
+
+for my $case (
+    {
+        name => 'custom comment marker',
+        engine => Template::EmbeddedPerl->new(comment_mark => '*'),
+        template => "* one\\\n* two\\\n<% die 'custom comments' %>\n",
+        source => 'custom-comments.epl',
+        line => 3,
+    },
+    {
+        name => 'CRLF continued comments',
+        engine => Template::EmbeddedPerl->new,
+        template => "# one\\\r\n# two\\\r\n<% die 'crlf comments' %>\r\n",
+        source => 'crlf-comments.epl',
+        line => 3,
+    },
+) {
+    reports_location(
+        runtime_failure($case->{engine}, $case->{template}, $case->{source}),
+        $case->{source},
+        $case->{line},
+        $case->{name},
+    );
+}
+
+reports_location(
+    runtime_failure(
+        Template::EmbeddedPerl->new,
+        "# ordinary\n  # indented\nvisible\n<% die 'ordinary comments' %>\n",
+        'ordinary-comments.epl',
+    ),
+    'ordinary-comments.epl',
+    4,
+    'ordinary comments retain their existing correct mapping',
+);
+
+reports_location(
+    runtime_failure(
+        Template::EmbeddedPerl->new,
+        "\\# visible comment marker\ntext\n<% die 'escaped comment' %>\n",
+        'escaped-comment.epl',
+    ),
+    'escaped-comment.epl',
+    3,
+    'an escaped comment marker retains its existing correct mapping',
+);
+
+reports_location(
+    runtime_failure(
+        Template::EmbeddedPerl->new,
+        "first\\\nsecond\\\n<% die 'escaped output lines' %>\n",
+        'escaped-output-lines.epl',
+    ),
+    'escaped-output-lines.epl',
+    3,
+    'ordinary escaped output newlines retain their existing correct mapping',
+);
+
+is(
+    Template::EmbeddedPerl->from_string(
+        "# one\\\n# two\\\nbody\n",
+        source => 'comment-output.epl',
+    )->render,
+    "body\n",
+    'continued comment repair does not restore removed output newlines',
+);
+is(
+    Template::EmbeddedPerl->from_string(
+        "first\\\nsecond\\\n",
+        source => 'escaped-output.epl',
+    )->render,
+    'firstsecond',
+    'ordinary escaped output newlines remain suppressed',
+);
+
 done_testing;

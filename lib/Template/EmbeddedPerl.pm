@@ -717,7 +717,9 @@ sub compile {
       my $escaped_newline_end = $content =~ s/\\\n$//mg;
 
       $content =~ s/^\\\\/\\/mg;   
-      $compiled .= "@{[$escaped_newline_start ? qq[\n]:'' ]} \$_O .= \"" . quotemeta($content) . "\";@{[$escaped_newline_end ? qq[\n]:'' ]}";
+      $compiled .= ("\n" x $escaped_newline_start)
+        . ' $_O .= "' . quotemeta($content) . '";'
+        . ("\n" x $escaped_newline_end);
     }
   }
 
