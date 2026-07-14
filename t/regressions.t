@@ -74,6 +74,36 @@ use Template::EmbeddedPerl;
 }
 
 {
+    my ($inner, $outer);
+    my $inner_error;
+    my $first = Template::EmbeddedPerl->new(
+        helpers => {
+            nested_failure => sub {
+                eval { $inner->render; 1 } or $inner_error = $@;
+                return Template::EmbeddedPerl->_current_render_context('nested_failure')
+                    ->engine->get_helpers('context_name')->();
+            },
+            context_name => sub { 'outer-after-failure' },
+        },
+    );
+    my $second = Template::EmbeddedPerl->new(
+        helpers => {
+            context_name => sub { die "inner context failed\n" },
+        },
+    );
+
+    $inner = $second->from_string('<%= context_name %>', source => 'inner-failure.epl');
+    $outer = $first->from_string('<%= nested_failure %>', source => 'outer-recovery.epl');
+
+    is(
+        $outer->render,
+        'outer-after-failure',
+        'a failed nested top-level render restores the outer ACTIVE_RENDERER',
+    );
+    like($inner_error, qr/inner context failed/, 'the nested render still reports its failure');
+}
+
+{
     my $compiled = Template::EmbeddedPerl->from_string(
         '<% die "runtime failed" %>',
         source => 'views/runtime-error.epl',

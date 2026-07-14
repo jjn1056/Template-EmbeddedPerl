@@ -2,7 +2,10 @@ package Template::EmbeddedPerl::Compiled;
 
 use warnings;
 use strict;
-use Template::EmbeddedPerl::Utils 'generate_error_message';
+use Template::EmbeddedPerl::Utils qw(
+  decorate_render_error
+  generate_error_message
+);
 
 sub render {
   my ($self, @args) = @_;
@@ -41,9 +44,11 @@ sub _render_with_context {
     };
     $error = $@ unless $ok;
   }
-  $frame->pop_render;
+  my $stack = [map { +{%$_} } @{$frame->render_stack}];
+  $frame->pop_render(failed => !$ok);
   $ok or do {
-    die generate_error_message($error, $self->{template}, $self->{source});
+    my $message = generate_error_message($error, $self->{template}, $self->{source});
+    die decorate_render_error($message, $stack);
   };
   return $output;
 }

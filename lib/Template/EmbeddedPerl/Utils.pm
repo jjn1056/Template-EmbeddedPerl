@@ -10,6 +10,7 @@ our @EXPORT_OK = qw(
   normalize_linefeeds
   uri_escape
   escape_javascript
+  decorate_render_error
   generate_error_message
 );
 
@@ -59,6 +60,8 @@ sub generate_error_message {
 
   warn "RAW MESSAGE: [$msg]" if $ENV{DEBUG_TEMPLATE_EMBEDDED_PERL};
 
+  return $msg if _has_render_stack($msg);
+
   $source = $source ? "$source" : 'unknown';
 
   my @files;
@@ -85,6 +88,32 @@ sub generate_error_message {
   }
 
   return length($text) ? "$text\n" : $msg;
+}
+
+sub decorate_render_error {
+  my ($error, $stack) = @_;
+
+  return $error if _has_render_stack($error);
+  return $error unless $stack && @$stack;
+
+  my $separator = $error =~ /\n\z/ ? "\n" : "\n\n";
+  my $render_stack = "Render stack:\n";
+  for my $entry (@$stack) {
+    my $kind = $entry->{kind};
+    my $identifier = $entry->{identifier};
+    my $source = defined($entry->{source}) && length($entry->{source})
+      ? $entry->{source}
+      : 'unknown';
+    $render_stack .= "  $kind $identifier ($source)\n";
+  }
+
+  return $error . $separator . $render_stack;
+}
+
+sub _has_render_stack {
+  my ($error) = @_;
+  return defined($error)
+    && $error =~ /(?:\A|\n)Render stack:\n(?:  [^\n]+(?:\n|\z))+\z/;
 }
 
 1;

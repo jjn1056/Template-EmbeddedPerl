@@ -41,9 +41,17 @@ sub render_file {
 
 sub render_view_object {
     my ($self, $view) = @_;
-    my $identifier = $self->engine->_template_for_view($view, $self);
+    my $template_identifier = $self->engine->_template_for_view($view, $self);
+    my $compiled = $self->engine->from_file($template_identifier);
     my $kind = @{$self->frame->render_stack} ? 'view' : 'root';
-    return $self->with(view => $view)->render_file($kind, $identifier);
+    return $compiled->_render_with_context(
+        $self->with(view => $view, source => $compiled->{source}),
+        {
+            kind => $kind,
+            identifier => Scalar::Util::blessed($view),
+            source => $compiled->{source},
+        },
+    );
 }
 
 sub build_child_view {
