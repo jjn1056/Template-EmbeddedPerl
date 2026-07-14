@@ -47,6 +47,8 @@ sub write_template ($directory, $identifier, $content) {
     has active => (is => 'ro', required => 1);
     has root => (is => 'ro', required => 1);
     has parent => (is => 'ro', required => 1);
+
+    sub template { 'components/navbar' }
 }
 
 {
@@ -54,6 +56,8 @@ sub write_template ($directory, $identifier, $content) {
     use Moo;
 
     has label => (is => 'ro', required => 1);
+    has root => (is => 'ro');
+    has parent => (is => 'ro');
 }
 
 {
@@ -64,6 +68,9 @@ sub write_template ($directory, $identifier, $content) {
 
     sub build_view ($self, $logical_name, $args, $context) {
         my $class = "Documentation::View::$logical_name";
+        unless ($class->can('new')) {
+            eval "require $class; 1" or die $@;
+        }
         my $view = $class->new(
             %$args,
             root => $context->root_view,
@@ -77,7 +84,11 @@ sub write_template ($directory, $identifier, $content) {
         return $view;
     }
 
-    sub template_for { return }
+    sub template_for ($self, $view, $context) {
+        return 'components/contact_item'
+            if $view->isa('Documentation::View::HTML::ContactItem');
+        return;
+    }
 }
 
 my $temporary = tempdir(CLEANUP => 1);
@@ -90,13 +101,20 @@ write_template($first, 'pages/index', <<'EPL');
 %   return "Welcome, $name";
 % }
 % layout 'layouts/application', title => $title
-<%= content_for 'css', sub { '<link href="/contacts.css">' } %>
+<%= content_for 'css', sub { '<meta name="theme" content="first">' } %>
+<%= content_replace 'css', sub { '<link href="/contacts.css">' } %>
 <main><h1><%= $subtitle %></h1><ul><%= partial 'contacts/item', name => $name %></ul></main>
 EPL
 
 write_template($first, 'layouts/application', <<'EPL');
 % args $title = 'Default'
-<!doctype html><title><%= $title %></title><head><%= yield 'css' %></head><body><%= yield %></body>
+<!doctype html><title><%= $title %></title><head>
+% if (has_content 'css') {
+<%= yield 'css' %>
+% } else {
+<meta name="theme" content="default">
+% }
+</head><body><%= yield %></body>
 EPL
 
 write_template($first, 'contacts/item', <<'EPL');
@@ -107,19 +125,19 @@ EPL
 write_template($second, 'pages/index', '<p>second directory</p>');
 
 write_template($first, 'html_page/contact_list', <<'EPL');
-<section class="contacts"><%= view 'HTML::Navbar', active => 'contacts' %><%= view $self->prebuilt_item %><%= view 'HTMLPage::Shell', title => "Shell " . $self->title, sub ($wrapper) { %><p>body-self=<%= $self->title %>; callback=<%= $wrapper->title %></p><% } %></section>
+<section class="contacts" data-source="convention"><%= view 'HTML::Navbar', active => 'contacts' %><%= view $self->prebuilt_item %><%= view 'HTML::ContactItem', label => '<Logical>' %><%= view 'HTMLPage::Shell', title => "Shell " . $self->title, sub ($wrapper) { %><p>body-self=<%= $self->title %>; callback=<%= $wrapper->title %></p><% } %></section>
 EPL
 
 write_template($first, 'html_page/shell', <<'EPL');
-<article data-wrapper="<%= $self->title %>"><h1><%= $self->title %></h1><%= yield %><%= view 'HTML::Navbar', active => 'wrapper' %></article>
+<article data-source="convention" data-wrapper="<%= $self->title %>"><h1><%= $self->title %></h1><%= yield %><%= view 'HTML::Navbar', active => 'wrapper' %></article>
 EPL
 
-write_template($first, 'html/navbar', <<'EPL');
-<nav><%= $self->active %> root=<%= $self->root->title %> parent=<%= $self->parent->title %></nav>
+write_template($first, 'components/navbar', <<'EPL');
+<nav data-source="object"><%= $self->active %> root=<%= $self->root->title %> parent=<%= $self->parent->title %></nav>
 EPL
 
-write_template($first, 'html/contact_item', <<'EPL');
-<li class="contact"><%= $self->label %></li>
+write_template($first, 'components/contact_item', <<'EPL');
+<li class="contact" data-source="resolver"><%= $self->label %> root=<%= $self->root ? $self->root->title : 'none' %> parent=<%= $self->parent ? $self->parent->title : 'none' %></li>
 EPL
 
 my $lazy_default_calls = 0;
@@ -134,9 +152,9 @@ my $untyped_engine = Template::EmbeddedPerl->new(
 
 is(
     $untyped_engine->from_file('pages/index')->render(name => '<Ada>'),
-    "<!doctype html><title>Directory One</title><head><link href=\"/contacts.css\"></head><body>\n"
+    "<!doctype html><title>Directory One</title><head>\n<link href=\"/contacts.css\">\n</head><body>\n\n"
         . "<main><h1>Welcome, &lt;Ada&gt;</h1><ul><li>&lt;Ada&gt;</li>\n</ul></main>\n</body>\n",
-    'untyped page uses the first directory, lazy args, named content, layout, and a once-escaped partial',
+    'untyped page uses the first directory, content replacement, has_content, layout, and a once-escaped partial',
 );
 is($lazy_default_calls, 1, 'an absent lazy argument is evaluated once');
 $untyped_engine->from_file('pages/index')->render(
@@ -164,11 +182,12 @@ my $root = Documentation::View::HTMLPage::ContactList->new(
 
 is(
     $typed_engine->render_view($root),
-    "<section class=\"contacts\"><nav>contacts root=Contacts parent=Contacts</nav>\n"
-        . "<li class=\"contact\">&lt;Prebuilt&gt;</li>\n"
-        . "<article data-wrapper=\"Shell Contacts\"><h1>Shell Contacts</h1><p>body-self=Contacts; callback=Shell Contacts</p>"
-        . "<nav>wrapper root=Contacts parent=Shell Contacts</nav>\n</article>\n</section>\n",
-    'typed root uses HTMLPage snake-case convention with logical and prebuilt children plus a wrapper body',
+    "<section class=\"contacts\" data-source=\"convention\"><nav data-source=\"object\">contacts root=Contacts parent=Contacts</nav>\n"
+        . "<li class=\"contact\" data-source=\"resolver\">&lt;Prebuilt&gt; root=none parent=none</li>\n"
+        . "<li class=\"contact\" data-source=\"resolver\">&lt;Logical&gt; root=Contacts parent=Contacts</li>\n"
+        . "<article data-source=\"convention\" data-wrapper=\"Shell Contacts\"><h1>Shell Contacts</h1><p>body-self=Contacts; callback=Shell Contacts</p>"
+        . "<nav data-source=\"object\">wrapper root=Contacts parent=Shell Contacts</nav>\n</article>\n</section>\n",
+    'render_view and nested view apply object template, resolver template, and convention precedence',
 );
 
 my ($root_navbar) = grep { $_->{logical_name} eq 'HTML::Navbar' && $_->{view}->active eq 'contacts' } $resolver->calls->@*;

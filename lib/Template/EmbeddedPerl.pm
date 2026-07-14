@@ -938,7 +938,7 @@ least potentially easier to read.  For example:
 
 =head2 Smart Lines and Named Arguments
 
-Set C<smart_lines> to a true value to make a line beginning with C<%> or C<%=>
+Set C<smart_lines> to a true value to make a line beginning with C<< % >> or C<< %= >>
 a complete directive without a trailing delimiter. This is especially useful
 for declarative named template arguments:
 
@@ -1070,7 +1070,7 @@ templates use this same ordered search path.
 
 =item * C<smart_lines>
 
-Boolean indicating whether a line beginning with C<%> or C<%=> is a complete
+Boolean indicating whether a line beginning with C<< % >> or C<< %= >> is a complete
 directive. Default is C<0>. See L</Smart Lines and Named Arguments>.
 
 =item * C<view_namespace>
@@ -1120,8 +1120,10 @@ C<raw> helper has a version called C<safe> which does any needed encoding first 
 unchanged any already created safe string objects).
 
 If the value is an object that does C<to_safe_string> then the object will first be converted
-to a safe string by calling it (with the template object as the first parameter).  That will
-allow you to safely stringify objects without needing to do so manually.
+to a safe string by calling it. Legacy C<render> methods pass the template
+engine as the first parameter; typed C<render_view> rendering passes the active
+view. That allows you to safely stringify objects without needing to do so
+manually.
 
 B<NOTE> we only check for objects with the C<to_safe_string> method when using C<auto_escape>
 If you are not using this safety feature and you are manually performing any needed escaping

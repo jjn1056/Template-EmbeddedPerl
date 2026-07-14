@@ -35,7 +35,8 @@ argument is absent; an explicit `undef` is a supplied value.
 ```epl
 % args $name, $title = 'Contacts', $heading = sub { "Contacts for $name" }
 % layout 'layouts/application', title => $title
-<%= content_for 'css', sub { '<link href="/contacts.css">' } %>
+<%= content_for 'css', sub { '<meta name="theme" content="first">' } %>
+<%= content_replace 'css', sub { '<link href="/contacts.css">' } %>
 <main>
   <h1><%= $heading %></h1>
   <ul><%= partial 'contacts/item', name => $name %></ul>
@@ -55,6 +56,7 @@ Layouts have an independent argument contract. `yield` returns the rendered
 page body, while `yield 'css'` returns the named content accumulated by
 `content_for`. `content_replace` replaces rather than appends a named block,
 and `has_content 'css'` checks whether a named block has nonempty output.
+Here, the replacement leaves only the stylesheet link for the layout to yield.
 
 `layouts/application.epl`:
 
@@ -64,6 +66,8 @@ and `has_content 'css'` checks whether a named block has nonempty output.
 <title><%= $title %></title>
 % if (has_content 'css') {
 <head><%= yield 'css' %></head>
+% } else {
+<head><meta name="theme" content="default"></head>
 % }
 <body><%= yield %></body>
 ```
@@ -157,7 +161,9 @@ use Moo;
 
 sub build_view ($self, $logical_name, $args, $context) {
     my $class = "MyApp::View::$logical_name";
-    eval "require $class; 1" or die $@;
+    unless ($class->can('new')) {
+        eval "require $class; 1" or die $@;
+    }
     return $class->new(
         %$args,
         root => $context->root_view,
@@ -170,6 +176,11 @@ sub template_for ($self, $view, $context) {
     return;
 }
 ```
+
+Place this resolver after the view class definitions when using one script:
+classes already defined in that script provide `new`, so the resolver does not
+try to require a nonexistent matching `.pm` file. Classes not yet loaded are
+required before construction.
 
 Create the engine and root in application code. The root's lazy `navbar` is a
 preconstructed child: the core does not invoke `build_view` for it. The item is
