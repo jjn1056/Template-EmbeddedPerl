@@ -82,6 +82,34 @@ use Template::EmbeddedPerl;
     sub name { $_[0]->{name} }
 }
 
+{
+    package Local::CompositionErrors::SourceObserverLoader;
+
+    our @ISA = ('Template::EmbeddedPerl');
+
+    sub from_file {
+        my ($proto, $identifier, @args) = @_;
+        my $self = ref($proto) ? $proto : $proto->new(@args);
+
+        if ($identifier eq 'outer/with-source') {
+            Template::EmbeddedPerl::from_file($self, $identifier, @args);
+            Template::EmbeddedPerl::from_file($self, 'dependencies/same-engine', @args);
+            die "same-engine observer loader failed\n";
+        }
+
+        if ($identifier eq 'outer/without-source') {
+            Template::EmbeddedPerl::from_file(
+                $self->{dependency_engine},
+                'dependencies/other-engine',
+                @args,
+            );
+            die "other-engine observer loader failed\n";
+        }
+
+        return $self->SUPER::from_file($identifier, @args);
+    }
+}
+
 sub write_fixture ($root, $identifier, $content) {
     my @parts = split m{/}, "$identifier.epl";
     my $file = File::Spec->catfile($root, @parts);
@@ -672,6 +700,80 @@ is(
     scalar(grep { $_ eq 'virtual/fails' } @{$virtual_engine->{virtual_loads}}),
     1,
     'a failing virtual loader is invoked once for one attempted render entry',
+);
+
+my $same_engine_dependency_source = write_fixture(
+    $directory,
+    'dependencies/same-engine',
+    'same engine dependency',
+);
+my $other_engine_directory = tempdir(CLEANUP => 1);
+my $other_engine_dependency_source = write_fixture(
+    $other_engine_directory,
+    'dependencies/other-engine',
+    'other engine dependency',
+);
+my $outer_with_source = write_fixture(
+    $directory,
+    'outer/with-source',
+    'outer source',
+);
+my $source_observer_engine = Local::CompositionErrors::SourceObserverLoader->new(
+    directories => [$directory],
+    dependency_engine => Template::EmbeddedPerl->new(
+        directories => [$other_engine_directory],
+    ),
+);
+my $same_engine_observer_root = $source_observer_engine->from_string(
+    q{<%= partial 'outer/with-source' %>},
+    source => 'same-engine-observer-root.epl',
+    identifier => 'same-engine-observer-root',
+);
+my $same_engine_observer_error = capture_failure(sub {
+    $same_engine_observer_root->render;
+});
+like(
+    $same_engine_observer_error,
+    qr/same-engine observer loader failed/,
+    'a custom outer loader failure is preserved after a same-engine dependency load',
+);
+assert_single_stack(
+    $same_engine_observer_error,
+    "Render stack:\n"
+        . "  root same-engine-observer-root (same-engine-observer-root.epl)\n"
+        . "  partial outer/with-source ($outer_with_source)\n",
+    'same-engine nested source observation',
+);
+unlike(
+    $same_engine_observer_error,
+    qr/\Q$same_engine_dependency_source\E/,
+    'a same-engine dependency source does not replace the outer attempted entry source',
+);
+
+my $other_engine_observer_root = $source_observer_engine->from_string(
+    q{<%= partial 'outer/without-source' %>},
+    source => 'other-engine-observer-root.epl',
+    identifier => 'other-engine-observer-root',
+);
+my $other_engine_observer_error = capture_failure(sub {
+    $other_engine_observer_root->render;
+});
+like(
+    $other_engine_observer_error,
+    qr/other-engine observer loader failed/,
+    'a custom outer loader failure is preserved after an other-engine dependency load',
+);
+assert_single_stack(
+    $other_engine_observer_error,
+    "Render stack:\n"
+        . "  root other-engine-observer-root (other-engine-observer-root.epl)\n"
+        . "  partial outer/without-source (unknown)\n",
+    'other-engine nested source observation',
+);
+unlike(
+    $other_engine_observer_error,
+    qr/\Q$other_engine_dependency_source\E/,
+    'an other-engine dependency source does not populate the outer attempted entry source',
 );
 
 my $first_success = $engine->from_string(

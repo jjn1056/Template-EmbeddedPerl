@@ -67,8 +67,17 @@ sub render_view_object {
 
 sub _load_compiled_file {
     my ($self, $entry, $identifier) = @_;
-    local $SOURCE_OBSERVER = sub { $entry->{source} = $_[0] };
-    my $compiled = $self->engine->from_file($identifier);
+    my $engine = $self->engine;
+    my $engine_refaddr = Scalar::Util::refaddr($engine);
+    local $SOURCE_OBSERVER = sub {
+        my ($observed_engine, $observed_identifier, $resolved_path) = @_;
+        return unless defined($engine_refaddr)
+            && ref($observed_engine)
+            && Scalar::Util::refaddr($observed_engine) == $engine_refaddr;
+        return unless defined($observed_identifier) && $observed_identifier eq $identifier;
+        $entry->{source} = $resolved_path;
+    };
+    my $compiled = $engine->from_file($identifier);
     $entry->{source} = $compiled->{source} if defined $compiled->{source};
     return $compiled;
 }
