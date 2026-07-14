@@ -539,17 +539,11 @@ sub _construct_view {
 }
 
 sub _template_for_view {
-  my ($self, $view, $context) = @_;
+  my ($self, $view) = @_;
   my $class = Scalar::Util::blessed($view) || ref($view) || "$view";
 
   if (Scalar::Util::blessed($view) && $view->can('template')) {
     my $template = $view->template;
-    return $template if defined($template) && length($template);
-  }
-
-  my $resolver = $self->{view_resolver};
-  if ($resolver && $resolver->can('template_for')) {
-    my $template = $resolver->template_for($view, $context);
     return $template if defined($template) && length($template);
   }
 

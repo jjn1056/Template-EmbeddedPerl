@@ -52,6 +52,13 @@ use Template::EmbeddedPerl;
 }
 
 {
+    package Local::View::MissingExplicit;
+    use Moo;
+
+    sub template { 'missing/explicit' }
+}
+
+{
     package Local::View::HTML::Page;
     use Moo;
 
@@ -163,6 +170,11 @@ my $engine = Template::EmbeddedPerl->new(
     },
     auto_escape => 1,
 );
+
+throws_ok {
+    $engine->render_view(Local::View::MissingExplicit->new);
+} qr/Template 'missing\/explicit' not found; searched:/,
+    'a missing explicit template fails without convention fallback';
 
 throws_ok {
     Local::View::HTML::Contacts::Index->new(contacts => []);

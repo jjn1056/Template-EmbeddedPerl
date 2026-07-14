@@ -12,13 +12,6 @@ use Template::EmbeddedPerl;
 }
 
 {
-    package Local::TemplateLookup::Empty;
-
-    sub new { bless {}, shift }
-    sub template { '' }
-}
-
-{
     package Local::TemplateLookup::Outside;
 
     sub new { bless {}, shift }
@@ -31,15 +24,10 @@ use Template::EmbeddedPerl;
 }
 
 {
-    package Local::TemplateLookup::Resolver;
+    package MyApp::View::Empty;
 
-    sub new { bless { calls => [], template => $_[1] }, $_[0] }
-
-    sub template_for {
-        my ($self, $view, $context) = @_;
-        push @{ $self->{calls} }, [$view, $context];
-        return $self->{template};
-    }
+    sub new { bless {}, shift }
+    sub template { '' }
 }
 
 my $root = tempdir(CLEANUP => 1);
@@ -57,11 +45,9 @@ open my $shared_fh, '>', $shared_template or die "Failed to create $shared_templ
 print {$shared_fh} 'shared';
 close $shared_fh or die "Failed to close $shared_template: $!";
 
-my $resolver = Local::TemplateLookup::Resolver->new('resolver/template');
 my $engine = Template::EmbeddedPerl->new(
     directories => [[$root, 'app'], [$root, 'shared']],
     view_namespace => 'MyApp::View',
-    view_resolver => $resolver,
 );
 
 is_deeply(
@@ -84,27 +70,19 @@ is($uncached->{identifier}, 'html/contact_list', 'uncached compiled template ret
 is($uncached->{source}, $app_template, 'uncached compiled template retains source metadata');
 
 is(
-    $engine->_template_for_view(Local::TemplateLookup::Explicit->new, 'context'),
+    $engine->_template_for_view(Local::TemplateLookup::Explicit->new),
     'objects/explicit',
-    'object template takes precedence over resolver',
+    'a nonempty object template is authoritative',
 );
-is(scalar @{ $resolver->{calls} }, 0, 'resolver is skipped for explicit object template');
-my $empty_view = Local::TemplateLookup::Empty->new;
 is(
-    $engine->_template_for_view($empty_view, 'context'),
-    'resolver/template',
-    'resolver supplies template after empty object template',
+    $engine->_template_for_view(MyApp::View::Empty->new),
+    'empty',
+    'an empty object template falls back to the namespace convention',
 );
-is_deeply(
-    $resolver->{calls}[0],
-    [$empty_view, 'context'],
-    'resolver receives the view and context',
-);
-$resolver->{template} = undef;
 is(
-    $engine->_template_for_view(MyApp::View::HTML::ContactList->new, 'context'),
+    $engine->_template_for_view(MyApp::View::HTML::ContactList->new),
     'html/contact_list',
-    'namespace convention follows an empty resolver result',
+    'the namespace convention resolves an object without a template override',
 );
 
 my $error;
@@ -112,7 +90,7 @@ eval { $engine->_class_to_template('OtherApp::View::HTML'); 1 } or $error = $@;
 like($error, qr/Cannot resolve template for view class 'OtherApp::View::HTML'/, 'classes outside view namespace fail');
 
 undef $error;
-eval { $engine->_template_for_view(Local::TemplateLookup::Outside->new, 'context'); 1 } or $error = $@;
+eval { $engine->_template_for_view(Local::TemplateLookup::Outside->new); 1 } or $error = $@;
 like($error, qr/Cannot resolve template for view class 'Local::TemplateLookup::Outside'/, 'unresolvable view names its class');
 
 unlink $app_template or die "Failed to remove $app_template: $!";
