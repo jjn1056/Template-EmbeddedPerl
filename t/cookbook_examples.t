@@ -169,4 +169,34 @@ like(
     'tutorial warning reports its template source and line',
 );
 
+my $cookbook_path = File::Spec->catfile(
+    $root, qw(lib Template EmbeddedPerl Cookbook.pod),
+);
+ok(-e $cookbook_path, 'installed cookbook POD exists');
+
+my $cookbook = -e $cookbook_path ? read_file($cookbook_path) : '';
+for my $heading (
+    'WHICH DOCUMENT SHOULD I READ?',
+    'RENDERING AND LOADING',
+    'TEMPLATE INPUTS',
+    'OUTPUT AND ESCAPING',
+    'COMPOSITION',
+    'SYNTAX AND FORMATTING',
+    'HELPERS AND CONFIGURATION',
+    'TESTING AND TROUBLESHOOTING',
+) {
+    like($cookbook, qr/^=head1 \Q$heading\E$/m, "cookbook contains $heading");
+}
+
+like(
+    $cookbook,
+    qr/L<Template::EmbeddedPerl::Tutorial>/,
+    'cookbook links newcomers to the tutorial',
+);
+like(
+    $cookbook,
+    qr/L<Template::EmbeddedPerl::Cookbook::TypedViews>/,
+    'cookbook links framework authors to typed views',
+);
+
 done_testing;
