@@ -96,6 +96,33 @@ use Template::EmbeddedPerl;
     sub build_view { return {} }
 }
 
+{
+    package Local::View::Collision;
+
+    sub new { bless {}, $_[0] }
+    sub template { 'components/collision' }
+}
+
+{
+    package Local::View::CollisionLeaf;
+
+    sub new { bless {}, $_[0] }
+    sub template { 'components/collision_leaf' }
+}
+
+{
+    package Local::View::CollisionResolver;
+
+    sub new { bless {}, $_[0] }
+
+    sub build_view {
+        my ($self, $target) = @_;
+        die "Unexpected logical target '$target'\n"
+            unless $target eq 'Local::View::Collision';
+        return Local::View::CollisionLeaf->new;
+    }
+}
+
 my $template_directory = File::Spec->catdir(qw(t templates views));
 my $resolver = Local::View::Resolver->new;
 my $engine = Template::EmbeddedPerl->new(
@@ -296,6 +323,20 @@ like(
     $invalid_resolver_error,
     qr{Render stack:\n  root invalid-resolver \(invalid-resolver\.epl\)\n  view HTML::Page \(unknown\)\n\z},
     'an invalid resolver result identifies the attempted logical view',
+);
+
+my $collision_engine = Template::EmbeddedPerl->new(
+    directories => [$template_directory],
+    view_resolver => Local::View::CollisionResolver->new,
+);
+my $collision_root = $collision_engine->from_string(
+    q{<%= view $_[0] %>},
+    source => 'collision-root.epl',
+);
+like(
+    $collision_root->render(Local::View::Collision->new),
+    qr/\Acollision leaf\s*\z/,
+    'logical names do not collide with active object identity keys',
 );
 
 my $invalid_child_target = $engine->from_string(

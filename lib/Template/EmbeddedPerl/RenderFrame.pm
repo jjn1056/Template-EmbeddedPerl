@@ -23,6 +23,7 @@ sub push_render {
             next unless defined($active->{cycle_key})
                 && $active->{cycle_key} eq $entry{cycle_key};
         } else {
+            next if defined $active->{cycle_key};
             next unless $active->{kind} eq $entry{kind};
             next unless $active->{identifier} eq $entry{identifier};
         }
