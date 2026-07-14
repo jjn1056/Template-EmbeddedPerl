@@ -354,6 +354,7 @@ Give string templates a C<source> name so errors identify both the template
 and its original template line. This compile failure reports line 2 of
 C<tutorial-compile.epl>:
 
+B<Fragment:>
   my $error = eval {
       Template::EmbeddedPerl->from_string(
           "first\n<%= \$missing %>\n",
@@ -365,6 +366,7 @@ C<tutorial-compile.epl>:
 
 The source name and line are also stable for a runtime exception:
 
+B<Fragment:>
   my $error = eval {
       Template::EmbeddedPerl->from_string(
           "first\n<% die 'tutorial runtime' %>\n",
@@ -376,6 +378,7 @@ The source name and line are also stable for a runtime exception:
 
 Warnings retain the same location when captured by the caller:
 
+B<Fragment:>
   my @warnings;
   {
       local $SIG{__WARN__} = sub { push @warnings, @_ };
@@ -399,10 +402,12 @@ times:
   my $html = $compiled->render(contacts => $app->contacts);
 
 Keep the engine and compiled templates alive for the lifetime of the process.
-When code repeatedly calls C<from_string> or C<render> for the same template,
-C<use_cache =E<gt> 1> can reuse in-memory compiled code. It helps in persistent
-processes such as PSGI applications; a short-lived command gains little from
-an in-memory cache.
+Retaining C<$compiled> already avoids recompilation when it is rendered again.
+Enable C<use_cache =E<gt> 1> when code repeatedly asks the engine to look up
+or compile the same template with C<from_file> or C<from_string>; it can reuse
+the in-memory compiled code for those repeated engine calls. It helps in
+persistent processes such as PSGI applications; a short-lived command gains
+little from an in-memory cache.
 
 Configure shared and application templates in deliberate order:
 
