@@ -1,0 +1,4 @@
+<h1><%= $self->title %></h1>
+<p><%= join ', ', map { $_->{name} } @{$self->contacts} %></p>
+<p>args: <%= scalar @_ %></p>
+<%= $self->capture_context %>

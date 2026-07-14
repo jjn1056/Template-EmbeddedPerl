@@ -209,6 +209,18 @@ sub _new_render_context {
   );
 }
 
+sub render_view {
+  my ($self, $view) = @_;
+  die "render_view requires a blessed view object\n"
+    unless Scalar::Util::blessed($view);
+
+  my $context = $self->_new_render_context(
+    view => $view,
+    root_view => $view,
+  );
+  return $context->render_view_object($view);
+}
+
 sub get_helpers {
   my ($self, $helper) = @_;
   my %helpers = ($self->default_helpers, %{ $self->{helpers} || +{} });
@@ -273,10 +285,12 @@ sub default_helpers {
       return $engine->raw($output);
     },
     to_safe_string    => sub {
-      my ($self, @args) = @_;
+      my ($engine, @args) = @_;
+      my $context = Template::EmbeddedPerl->_current_render_context('to_safe_string');
+      my $receiver = defined($context->view) ? $context->view : $engine;
       return map {
         Scalar::Util::blessed($_) && $_->can('to_safe_string')
-        ? $_->to_safe_string($self)
+        ? $_->to_safe_string($receiver)
         : $_;
       } @args;
     },

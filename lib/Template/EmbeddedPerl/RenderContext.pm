@@ -38,6 +38,13 @@ sub render_file {
     );
 }
 
+sub render_view_object {
+    my ($self, $view) = @_;
+    my $identifier = $self->engine->_template_for_view($view, $self);
+    my $kind = @{$self->frame->render_stack} ? 'view' : 'root';
+    return $self->with(view => $view)->render_file($kind, $identifier);
+}
+
 sub named_arguments {
     my ($self, $args) = @_;
     croak 'Odd template argument list' if @$args % 2;
