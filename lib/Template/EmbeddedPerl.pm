@@ -248,6 +248,20 @@ sub default_helpers {
       my $output = $context->render_file('partial', $identifier, @args);
       return $engine->raw($output);
     },
+    view              => sub {
+      my ($engine, $target, @args) = @_;
+      my $body = @args && ref($args[-1]) eq 'CODE' ? pop @args : undef;
+      my $context = Template::EmbeddedPerl->_current_render_context('view');
+      my $child = $context->build_child_view($target, \@args);
+      my $captured = $body ? $body->($child) : '';
+      my $output = $context->frame->with_body(
+        defined($captured) ? $captured : '',
+        sub {
+          return $context->with(view => $child)->render_view_object($child);
+        },
+      );
+      return $engine->raw($output);
+    },
     layout            => sub {
       my ($engine, $identifier, @args) = @_;
       my $context = Template::EmbeddedPerl->_current_render_context('layout');

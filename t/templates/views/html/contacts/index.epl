@@ -1,4 +1,6 @@
-<h1><%= $self->title %></h1>
-<p><%= join ', ', map { $_->{name} } @{$self->contacts} %></p>
-<p>args: <%= scalar @_ %></p>
+%= view 'HTML::Page', title => $self->title, sub ($page) {
+  <h1><%= $page->title %></h1>
+  <p>root=<%= $self->title %></p>
+  %= view 'HTML::Contacts::Item', contact => $self->contacts->[0]
+% }
 <%= $self->capture_context %>
