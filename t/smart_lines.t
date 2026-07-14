@@ -41,6 +41,46 @@ is(
     'CRLF input normalizes and trims',
 );
 
+is(
+    $smart->from_string("% my \$value = 'ok'\n\nValue: <%= \$value %>\n")->render,
+    "\nValue: ok\n",
+    'smart lines preserve blank template lines',
+);
+
+{
+    my $nested = <<'TEMPLATE';
+% for my $outer (1 .. 2) {
+%   for my $inner (1 .. 2) {
+<%= $outer %>:<%= $inner %>
+%   }
+% }
+TEMPLATE
+
+    is(
+        $smart->from_string($nested)->render,
+        "1:1\n1:2\n2:1\n2:2\n",
+        'smart lines render nested blocks',
+    );
+}
+
+{
+    my $multiline = <<'TEMPLATE';
+<%
+  my @values = (
+    'alpha',
+    'beta',
+  );
+%>
+<%= join(':', @values) %>
+TEMPLATE
+
+    is(
+        $smart->from_string($multiline)->render,
+        "\nalpha:beta\n",
+        'smart lines preserve multiline Perl blocks',
+    );
+}
+
 my $custom = Template::EmbeddedPerl->new(
     open_tag => '[[',
     close_tag => ']]',
