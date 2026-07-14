@@ -280,8 +280,8 @@ is(
         "first\\\nsecond\\\n",
         source => 'escaped-output.epl',
     )->render,
-    'firstsecond',
-    'ordinary escaped output newlines remain suppressed',
+    "first\\\nsecond",
+    'ordinary plain-text backslash-newline output remains unchanged',
 );
 
 done_testing;
