@@ -1,0 +1,11 @@
+%= view 'HTML::Page', title => $self->title, sub ($page) {
+<main>
+<h1><%= display_heading $self->title %></h1>
+%= view $self->prebuilt_badge
+<ul>
+% for my $contact (@{$self->contacts}) {
+%= view 'HTML::ContactItem', contact => $contact
+% }
+</ul>
+</main>
+% }
