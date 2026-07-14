@@ -377,8 +377,7 @@ sub from_string {
   };
   if ($@) {
     my $error = $@;
-    my $source_name = $source || 'unknown';
-    $error =~ s/ at template line (\d+)\n\z/ at $source_name line $1\n/;
+    $error =~ s/ at template line (\d+)\n\z/ at $diagnostic_source line $1\n/;
     die $error;
   }
 

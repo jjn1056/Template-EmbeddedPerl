@@ -133,6 +133,22 @@ reports_location(
     'unsafe line-directive characters are normalized deterministically',
 );
 
+my $unsafe_args_error = compile_failure(
+    Template::EmbeddedPerl->new,
+    "% args \@items\n",
+    $unsafe_source,
+);
+is(
+    $unsafe_args_error,
+    "args directive accepts only scalar arguments at pages/?bad' name.epl line 1\n",
+    'an args rewrite error reports its sanitized source and line',
+);
+unlike(
+    $unsafe_args_error,
+    qr/\Q$unsafe_source\E/,
+    'an args rewrite error does not leak the raw unsafe source',
+);
+
 is(
     warning_message(
         Template::EmbeddedPerl->new,
