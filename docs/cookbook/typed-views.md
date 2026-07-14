@@ -87,6 +87,10 @@ also bypasses it.
 
 ## Typed Views
 
+> **Experimental:** Typed view support, including `render_view`, `view`,
+> `view_namespace`, and `view_factory`, may change as real-world integration
+> needs become clearer.
+
 Typed views give templates a lexical `$self`. Use `render_view($view)` for a
 top-level typed object. Calling the legacy `render` methods with a blessed
 argument remains supported, but that object stays in `@_`; it is not inferred

@@ -1446,6 +1446,10 @@ do not infer a typed C<$self>.
 
 =head2 render_view
 
+B<Experimental:> Typed view support, including C<render_view>, C<view>,
+C<view_namespace>, and C<view_factory>, may change as real-world integration
+needs become clearer.
+
   my $output = $template->render_view($view);
 
 Renders a preconstructed blessed view object. Its template receives that object

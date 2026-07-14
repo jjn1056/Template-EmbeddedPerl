@@ -458,6 +458,10 @@ Passing a blessed value to this legacy API remains ordinary positional input in
 
 ## render\_view
 
+> **Experimental:** Typed view support, including `render_view`, `view`,
+> `view_namespace`, and `view_factory`, may change as real-world integration
+> needs become clearer.
+
     my $output = $template->render_view($view);
 
 Renders a preconstructed blessed typed view object. In its template, lexical

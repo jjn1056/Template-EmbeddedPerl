@@ -11,6 +11,42 @@ use Template::EmbeddedPerl;
 my $cookbook = File::Spec->catfile(qw(docs cookbook typed-views.md));
 ok(-e $cookbook, 'the typed-view cookbook is present');
 
+sub normalized_document {
+    my ($path) = @_;
+    open my $fh, '<', $path or die "Cannot read $path: $!";
+    local $/;
+    my $content = <$fh>;
+    close $fh or die "Cannot close $path: $!";
+    $content =~ s/^\s*>\s?//gm;
+    $content =~ s/\s+/ /g;
+    return $content;
+}
+
+my $markdown_notice = q{**Experimental:** Typed view support, including }
+    . q{`render_view`, `view`, `view_namespace`, and `view_factory`, may change }
+    . q{as real-world integration needs become clearer.};
+my $pod_notice = q{B<Experimental:> Typed view support, including }
+    . q{C<render_view>, C<view>, C<view_namespace>, and C<view_factory>, may change }
+    . q{as real-world integration needs become clearer.};
+
+for my $document (
+    [README => 'README.mkdn'],
+    [cookbook => $cookbook],
+) {
+    ok(
+        index(normalized_document($document->[1]), $markdown_notice) >= 0,
+        "$document->[0] marks typed views as experimental",
+    );
+}
+
+ok(
+    index(
+        normalized_document(File::Spec->catfile(qw(lib Template EmbeddedPerl.pm))),
+        $pod_notice,
+    ) >= 0,
+    'module POD marks typed views as experimental',
+);
+
 sub write_template {
     my ($directory, $identifier, $content) = @_;
     my @parts = split m{/}, $identifier;
