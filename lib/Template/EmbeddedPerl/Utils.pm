@@ -7,6 +7,7 @@ use URI::Escape ();
 use JSON::MaybeXS;
 
 our @EXPORT_OK = qw(
+  diagnostic_source_label
   normalize_linefeeds
   uri_escape
   escape_javascript
@@ -55,6 +56,15 @@ sub escape_javascript {
     return $escaped;
 }
 
+sub diagnostic_source_label {
+  my ($source) = @_;
+  my $label = defined($source) && length("$source") ? "$source" : 'unknown';
+  $label =~ s/(?:\r\n?|\n)+/ /g;
+  $label =~ tr/"/'/;
+  $label =~ s/[\x00-\x1f\x7f]/?/g;
+  return $label;
+}
+
 sub generate_error_message {
   my ($msg, $template, $source) = @_;
 
@@ -62,7 +72,7 @@ sub generate_error_message {
 
   return $msg if _has_render_stack($msg);
 
-  $source = $source ? "$source" : 'unknown';
+  $source = diagnostic_source_label($source);
 
   my @files;
   push @files, [$1, $2, $3, $msg] while $msg =~ /^(.+?) at\s+(.+?)\s+line\s+(\d+)/gm;
@@ -71,12 +81,14 @@ sub generate_error_message {
 
   my $text = '';
   foreach my $file (@files) {
-    my ($msg, $file, $line, $extra) = @$file; 
-    if($file !~ m/eval/) {
+    my ($message, $file_name, $line, $extra) = @$file;
+    my $is_template_file = $file_name =~ /\A\(eval \d+\)\z/
+      || $file_name eq $source;
+    if (!$is_template_file) {
       $text .= $extra;
       next;
     }
-    $text .= "$msg at $source line $line\n\n";
+    $text .= "$message at $source line $line\n\n";
 
     $line--;
     my $start = $line -1 >= 0 ? $line -1 : 0;

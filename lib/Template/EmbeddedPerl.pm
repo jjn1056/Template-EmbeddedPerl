@@ -15,7 +15,11 @@ use Template::EmbeddedPerl::Arguments;
 use Template::EmbeddedPerl::Compiled;
 use Template::EmbeddedPerl::RenderContext;
 use Template::EmbeddedPerl::RenderFrame;
-use Template::EmbeddedPerl::Utils qw(normalize_linefeeds generate_error_message);
+use Template::EmbeddedPerl::Utils qw(
+  diagnostic_source_label
+  normalize_linefeeds
+  generate_error_message
+);
 use Template::EmbeddedPerl::SafeString;
 use Regexp::Common qw /balanced/;
 
@@ -337,11 +341,16 @@ sub from_string {
   my $source = delete($args{source});
   my $identifier = delete($args{identifier});
   my $self = ref($proto) ? $proto : $proto->new(%args);
+  my $diagnostic_source = diagnostic_source_label($source);
 
   my $digest;
   if($self->{use_cache}) {
     $self->{compiled_cache} ||= {};
-    $digest = Digest::MD5::md5_hex($template);
+    $digest = Digest::MD5::md5_hex(
+      $template,
+      "\0template-source\0",
+      $diagnostic_source,
+    );
     if(my $cached = $self->{compiled_cache}->{$digest}) {
       return bless {
         template => $cached->{template},
@@ -713,7 +722,7 @@ sub compile {
     }
   }
 
-  $compiled = $self->compiled($compiled);
+  $compiled = $self->compiled($compiled, $source);
 
   warn "Compiled: $compiled\n" if $ENV{DEBUG_TEMPLATE_EMBEDDED_PERL};
 
@@ -725,10 +734,13 @@ sub compile {
 }
 
 sub compiled {
-  my ($self, $compiled) = @_;
+  my ($self, $compiled, $source) = @_;
+  my $diagnostic_source = diagnostic_source_label($source);
   my $wrapper = "package @{[ $self->{sandbox_ns} ]}; ";
   $wrapper .= "use strict; use warnings; use utf8; @{[ $self->{preamble} ]}; ";
-  $wrapper .= "sub { my \$__context = shift; my \$_O = ''; my \$self = \$__context->view; @{[ $self->{prepend} ]}; ${compiled}; return \$_O; };";
+  $wrapper .= "sub { my \$__context = shift; my \$_O = ''; my \$self = \$__context->view; @{[ $self->{prepend} ]};\n";
+  $wrapper .= qq{#line 1 "$diagnostic_source"\n};
+  $wrapper .= "${compiled}; return \$_O; };";
   return $wrapper;
 }
 
