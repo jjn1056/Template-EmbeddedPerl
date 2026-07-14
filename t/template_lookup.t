@@ -70,17 +70,17 @@ is($uncached->{identifier}, 'html/contact_list', 'uncached compiled template ret
 is($uncached->{source}, $app_template, 'uncached compiled template retains source metadata');
 
 is(
-    $engine->_template_for_view(Local::TemplateLookup::Explicit->new),
+    $engine->_resolve_view_template(Local::TemplateLookup::Explicit->new),
     'objects/explicit',
     'a nonempty object template is authoritative',
 );
 is(
-    $engine->_template_for_view(MyApp::View::Empty->new),
+    $engine->_resolve_view_template(MyApp::View::Empty->new),
     'empty',
     'an empty object template falls back to the namespace convention',
 );
 is(
-    $engine->_template_for_view(MyApp::View::HTML::ContactList->new),
+    $engine->_resolve_view_template(MyApp::View::HTML::ContactList->new),
     'html/contact_list',
     'the namespace convention resolves an object without a template override',
 );
@@ -90,7 +90,7 @@ eval { $engine->_class_to_template('OtherApp::View::HTML'); 1 } or $error = $@;
 like($error, qr/Cannot resolve template for view class 'OtherApp::View::HTML'/, 'classes outside view namespace fail');
 
 undef $error;
-eval { $engine->_template_for_view(Local::TemplateLookup::Outside->new); 1 } or $error = $@;
+eval { $engine->_resolve_view_template(Local::TemplateLookup::Outside->new); 1 } or $error = $@;
 like($error, qr/Cannot resolve template for view class 'Local::TemplateLookup::Outside'/, 'unresolvable view names its class');
 
 unlink $app_template or die "Failed to remove $app_template: $!";

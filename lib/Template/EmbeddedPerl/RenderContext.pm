@@ -57,7 +57,7 @@ sub render_view_object {
         },
         sub {
             my ($entry) = @_;
-            my $template_identifier = $self->engine->_template_for_view($view);
+            my $template_identifier = $self->engine->_resolve_view_template($view);
             my $compiled = $self->_load_compiled_file($entry, $template_identifier);
             return $compiled->_execute_with_context(
                 $self->with(view => $view, source => $entry->{source}),

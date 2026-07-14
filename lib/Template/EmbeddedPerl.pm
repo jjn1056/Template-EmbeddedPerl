@@ -538,7 +538,7 @@ sub _construct_view {
   return $view;
 }
 
-sub _template_for_view {
+sub _resolve_view_template {
   my ($self, $view) = @_;
   my $class = Scalar::Util::blessed($view) || ref($view) || "$view";
 
