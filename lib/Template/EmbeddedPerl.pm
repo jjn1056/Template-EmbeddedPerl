@@ -1458,6 +1458,8 @@ the same template precedence:
 
 A nonempty C<< $view->template >> result.
 
+=item 2.
+
 The C<view_namespace> convention.
 
 =back
