@@ -18,6 +18,30 @@ use Template::EmbeddedPerl;
     sub new { bless {}, $_[0] }
 }
 
+{
+    package Local::CompositionErrors::View::HTML::Wrapper;
+
+    sub new { bless {}, $_[0] }
+}
+
+{
+    package Local::CompositionErrors::View::HTML::Missing;
+
+    sub new { bless {}, $_[0] }
+}
+
+{
+    package Local::CompositionErrors::View::HTML::BrokenCompile;
+
+    sub new { bless {}, $_[0] }
+}
+
+{
+    package Local::CompositionErrors::View::HTML::BrokenRender;
+
+    sub new { bless {}, $_[0] }
+}
+
 sub write_fixture ($root, $identifier, $content) {
     my @parts = split m{/}, "$identifier.epl";
     my $file = File::Spec->catfile($root, @parts);
@@ -80,6 +104,11 @@ my $runtime_partial_source = write_fixture(
     'partials/runtime',
     "% args \$child\n%= view \$child\n",
 );
+my $broken_partial_source = write_fixture(
+    $directory,
+    'partials/broken_compile',
+    "% if (\n",
+);
 my $runtime_view_source = write_fixture(
     $directory,
     'html/explodes',
@@ -89,6 +118,19 @@ my $failing_layout_source = write_fixture(
     $directory,
     'layouts/fails',
     "layout before\n% die \"layout runtime failed\"\n",
+);
+write_fixture($directory, 'layouts/caller', 'caller[<%= yield %>]');
+write_fixture($directory, 'layouts/callback', 'callback[<%= yield %>]');
+write_fixture($directory, 'html/wrapper', 'wrapper[<%= yield %>]');
+my $broken_compile_source = write_fixture(
+    $directory,
+    'html/broken_compile',
+    "% if (\n",
+);
+write_fixture(
+    $directory,
+    'html/broken_render',
+    "% die \"child render failed\"\n",
 );
 
 my $last_probe_context;
@@ -106,6 +148,15 @@ my $engine = Template::EmbeddedPerl->new(
                 $context->frame->default_body,
                 $context->frame->content('css'),
                 $context->frame->content('js');
+        },
+        transaction_probe => sub {
+            my $context = Template::EmbeddedPerl->_current_render_context('transaction_probe');
+            my $frame = $context->frame;
+            return join '|',
+                $frame->default_body,
+                $frame->content('css'),
+                $frame->content('js'),
+                join(',', map { $_->[0] } @{$frame->current_scope->{layouts}});
         },
     },
 );
@@ -318,6 +369,211 @@ assert_single_stack(
 );
 assert_frame_clean($callback_context->frame, 'typed wrapper callback failure');
 assert_engine_reusable($callback_context->frame, 'typed wrapper callback failure');
+
+my $caught_callback_failure = $engine->from_string(<<'EPL',
+% content_for css => sub { raw 'caller css' }
+% layout 'layouts/caller'
+% my $caught;
+% eval {
+%   view $_[0], sub ($wrapper) {
+%     content_for css => sub { raw 'callback css' }
+%     content_for js => sub { raw 'callback js' }
+%     layout 'layouts/callback'
+%     die "caught callback failure"
+%   };
+%   1;
+% } or $caught = $@;
+%= transaction_probe
+EPL
+    source => 'roots/caught-callback.epl',
+    identifier => 'roots/caught-callback',
+);
+my $caught_callback_context = $engine->_new_render_context;
+my $caught_callback_output = $caught_callback_context->frame->with_body(
+    'caller body',
+    sub {
+        return $caught_callback_failure->_render_with_context(
+            $caught_callback_context,
+            {
+                kind => 'root',
+                identifier => 'roots/caught-callback',
+                source => 'roots/caught-callback.epl',
+            },
+            Local::CompositionErrors::View::HTML::Wrapper->new,
+        );
+    },
+);
+like(
+    $caught_callback_output,
+    qr/caller\[caller body\|caller css\|\|layouts\/caller\]/,
+    'a caught wrapper callback failure restores body, content, and caller layouts',
+);
+is(
+    $caught_callback_context->frame->content('css'),
+    'caller css',
+    'a caught callback failure preserves earlier caller content',
+);
+is(
+    $caught_callback_context->frame->content('js'),
+    '',
+    'a caught callback failure removes callback content',
+);
+
+my $caught_child_failure = $engine->from_string(<<'EPL',
+% content_for css => sub { raw 'caller css' }
+% layout 'layouts/caller'
+% my $caught;
+% eval {
+%   view $_[0], sub ($wrapper) {
+%     content_for css => sub { raw 'callback css' }
+%     content_for js => sub { raw 'callback js' }
+%     layout 'layouts/callback'
+%     return raw 'callback body';
+%   };
+%   1;
+% } or $caught = $@;
+%= transaction_probe
+EPL
+    source => 'roots/caught-child.epl',
+    identifier => 'roots/caught-child',
+);
+for my $case (
+    ['lookup', Local::CompositionErrors::View::HTML::Missing->new],
+    ['compile', Local::CompositionErrors::View::HTML::BrokenCompile->new],
+    ['render', Local::CompositionErrors::View::HTML::BrokenRender->new],
+) {
+    my ($failure, $child) = @$case;
+    my $context = $engine->_new_render_context;
+    my $output = $context->frame->with_body(
+        'caller body',
+        sub {
+            return $caught_child_failure->_render_with_context(
+                $context,
+                {
+                    kind => 'root',
+                    identifier => 'roots/caught-child',
+                    source => 'roots/caught-child.epl',
+                },
+                $child,
+            );
+        },
+    );
+    like(
+        $output,
+        qr/caller\[caller body\|caller css\|\|layouts\/caller\]/,
+        "a caught child $failure failure restores body, content, and caller layouts",
+    );
+    is(
+        $context->frame->content('css'),
+        'caller css',
+        "a caught child $failure failure preserves earlier caller content",
+    );
+    is(
+        $context->frame->content('js'),
+        '',
+        "a caught child $failure failure removes callback content",
+    );
+}
+
+my $successful_transaction_context = $engine->_new_render_context;
+my $successful_transaction_output = $successful_transaction_context->frame->with_body(
+    'caller body',
+    sub {
+        return $caught_child_failure->_render_with_context(
+            $successful_transaction_context,
+            {
+                kind => 'root',
+                identifier => 'roots/successful-child',
+                source => 'roots/caught-child.epl',
+            },
+            Local::CompositionErrors::View::HTML::Wrapper->new,
+        );
+    },
+);
+like(
+    $successful_transaction_output,
+    qr/caller\[callback\[caller body\|caller csscallback css\|callback js\|layouts\/caller,layouts\/callback\]\]/,
+    'a successful wrapper transaction keeps callback content and layouts',
+);
+is(
+    $successful_transaction_context->frame->content('css'),
+    'caller csscallback css',
+    'a successful wrapper transaction commits named content',
+);
+
+my $typed_root_compile_error = capture_failure(sub {
+    $engine->render_view(Local::CompositionErrors::View::HTML::BrokenCompile->new);
+});
+like(
+    $typed_root_compile_error,
+    qr/\Q$broken_compile_source\E line 1/,
+    'a broken typed root compile reports its resolved source and exact line',
+);
+assert_single_stack(
+    $typed_root_compile_error,
+    "Render stack:\n"
+        . "  root Local::CompositionErrors::View::HTML::BrokenCompile ($broken_compile_source)\n",
+    'broken typed root compile',
+);
+
+my $broken_partial_root_source = File::Spec->catfile($directory, qw(roots broken-partial.epl));
+my $broken_partial_root = $engine->from_string(
+    "%= partial 'partials/broken_compile'\n",
+    source => $broken_partial_root_source,
+    identifier => 'roots/broken-partial',
+);
+my $broken_partial_error = capture_failure(sub {
+    $broken_partial_root->render;
+});
+like(
+    $broken_partial_error,
+    qr/\Q$broken_partial_source\E line 1/,
+    'a broken nested partial compile reports its resolved source and exact line',
+);
+assert_single_stack(
+    $broken_partial_error,
+    "Render stack:\n"
+        . "  root roots/broken-partial ($broken_partial_root_source)\n"
+        . "  partial partials/broken_compile ($broken_partial_source)\n",
+    'broken nested partial compile',
+);
+
+my $child_diagnostic_root_source = File::Spec->catfile($directory, qw(roots child-diagnostic.epl));
+my $child_diagnostic_root = $engine->from_string(
+    "%= view \$_[0]\n",
+    source => $child_diagnostic_root_source,
+    identifier => 'roots/child-diagnostic',
+);
+for my $case (
+    [
+        'missing child view lookup',
+        Local::CompositionErrors::View::HTML::Missing->new,
+        'Local::CompositionErrors::View::HTML::Missing',
+        'unknown',
+        undef,
+    ],
+    [
+        'broken child view compile',
+        Local::CompositionErrors::View::HTML::BrokenCompile->new,
+        'Local::CompositionErrors::View::HTML::BrokenCompile',
+        $broken_compile_source,
+        qr/\Q$broken_compile_source\E line 1/,
+    ],
+) {
+    my ($description, $child, $identifier, $source, $source_pattern) = @$case;
+    my $error = capture_failure(sub {
+        $child_diagnostic_root->render($child);
+    });
+    like($error, $source_pattern, "$description preserves the resolved source")
+        if $source_pattern;
+    assert_single_stack(
+        $error,
+        "Render stack:\n"
+            . "  root roots/child-diagnostic ($child_diagnostic_root_source)\n"
+            . "  view $identifier ($source)\n",
+        $description,
+    );
+}
 
 my $first_success = $engine->from_string(
     q{<% content_for css => sub { raw 'first css' }; %><%= yield 'css' %>},

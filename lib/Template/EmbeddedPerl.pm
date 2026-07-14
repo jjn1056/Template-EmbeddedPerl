@@ -252,14 +252,16 @@ sub default_helpers {
       my ($engine, $target, @args) = @_;
       my $body = @args && ref($args[-1]) eq 'CODE' ? pop @args : undef;
       my $context = Template::EmbeddedPerl->_current_render_context('view');
-      my $child = $context->build_child_view($target, \@args);
-      my $captured = $body ? $body->($child) : '';
-      my $output = $context->frame->with_body(
-        defined($captured) ? $captured : '',
-        sub {
-          return $context->with(view => $child)->render_view_object($child);
-        },
-      );
+      my $output = $context->frame->with_transaction(sub {
+        my $child = $context->build_child_view($target, \@args);
+        my $captured = $body ? $body->($child) : '';
+        return $context->frame->with_body(
+          defined($captured) ? $captured : '',
+          sub {
+            return $context->with(view => $child)->render_view_object($child);
+          },
+        );
+      });
       return $engine->raw($output);
     },
     layout            => sub {
@@ -427,8 +429,13 @@ sub from_file {
   my ($proto, $file_proto, @args) = @_;
   my $self = ref($proto) ? $proto : $proto->new(@args);
   my $path = $self->_resolve_template_file($file_proto);
+  return $self->_from_resolved_file($file_proto, $path, @args);
+}
+
+sub _from_resolved_file {
+  my ($self, $identifier, $path, @args) = @_;
   open my $fh, '<', $path or die "Failed to open file $path: $!";
-  my %args = (@args, source => $path, identifier => $file_proto);
+  my %args = (@args, source => $path, identifier => $identifier);
   return $self->from_fh($fh, %args);
 }
 

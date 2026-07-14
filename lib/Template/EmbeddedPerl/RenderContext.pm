@@ -5,6 +5,7 @@ use warnings;
 
 use Carp 'croak';
 use Scalar::Util ();
+use Template::EmbeddedPerl::Utils 'decorate_render_error';
 
 sub new {
     my ($class, %args) = @_;
@@ -27,31 +28,71 @@ sub render_file {
     croak "Invalid $kind identifier"
         unless defined($identifier) && !ref($identifier);
 
-    my $compiled = $self->engine->from_file($identifier);
-    return $compiled->_render_with_context(
-        $self->with(source => $compiled->{source}),
+    return $self->execute_render(
         {
             kind => $kind,
             identifier => $identifier,
-            source => $compiled->{source},
         },
-        @args,
+        sub {
+            my ($entry) = @_;
+            my $source = $self->engine->_resolve_template_file($identifier);
+            $entry->{source} = $source;
+            my $compiled = $self->engine->_from_resolved_file(
+                $identifier,
+                $source,
+            );
+            return $compiled->_execute_with_context(
+                $self->with(source => $source),
+                @args,
+            );
+        },
     );
 }
 
 sub render_view_object {
     my ($self, $view) = @_;
-    my $template_identifier = $self->engine->_template_for_view($view, $self);
-    my $compiled = $self->engine->from_file($template_identifier);
     my $kind = @{$self->frame->render_stack} ? 'view' : 'root';
-    return $compiled->_render_with_context(
-        $self->with(view => $view, source => $compiled->{source}),
+    return $self->execute_render(
         {
             kind => $kind,
             identifier => Scalar::Util::blessed($view),
-            source => $compiled->{source},
+        },
+        sub {
+            my ($entry) = @_;
+            my $template_identifier = $self->engine->_template_for_view($view, $self);
+            my $source = $self->engine->_resolve_template_file($template_identifier);
+            $entry->{source} = $source;
+            my $compiled = $self->engine->_from_resolved_file(
+                $template_identifier,
+                $source,
+            );
+            return $compiled->_execute_with_context(
+                $self->with(view => $view, source => $source),
+            );
         },
     );
+}
+
+sub execute_render {
+    my ($self, $entry, $callback) = @_;
+    my $frame = $self->frame;
+    my $active_entry = $frame->push_render(
+        %$entry,
+        view => $self->view,
+    );
+
+    my ($ok, $output, $error);
+    $ok = eval {
+        $output = $callback->($active_entry);
+        1;
+    };
+    $error = $@ unless $ok;
+
+    my $stack = [map { +{%$_} } @{$frame->render_stack}];
+    $frame->pop_render(failed => !$ok);
+    die decorate_render_error($error, $stack) unless $ok;
+
+    return $output;
 }
 
 sub build_child_view {

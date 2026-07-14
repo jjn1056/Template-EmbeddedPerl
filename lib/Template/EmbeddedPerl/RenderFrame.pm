@@ -66,6 +66,38 @@ sub take_layouts {
     return \@layouts;
 }
 
+sub with_transaction {
+    my ($self, $callback) = @_;
+    my $named_content = {
+        map { $_ => [@{$self->{named_content}{$_}}] }
+            keys %{$self->{named_content}}
+    };
+    my $scope = $self->current_scope;
+    my $layouts = $scope ? [@{$scope->{layouts}}] : undef;
+    my $had_default_body = exists $self->{default_body};
+    my $default_body = $self->{default_body};
+
+    my ($ok, $output, $error);
+    $ok = eval {
+        $output = $callback->();
+        1;
+    };
+    $error = $@ unless $ok;
+
+    unless ($ok) {
+        $self->{named_content} = $named_content;
+        $scope->{layouts} = $layouts if $scope;
+        if ($had_default_body) {
+            $self->{default_body} = $default_body;
+        } else {
+            delete $self->{default_body};
+        }
+        die $error;
+    }
+
+    return $output;
+}
+
 sub with_body {
     my ($self, $body, $callback) = @_;
     local $self->{default_body} = $body;
