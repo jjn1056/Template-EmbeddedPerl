@@ -53,6 +53,9 @@ sub build_child_view {
     croak 'Preconstructed view objects do not accept constructor arguments'
         if Scalar::Util::blessed($target);
 
+    croak 'Logical view target must be a blessed object or a non-empty logical name'
+        unless defined($target) && !ref($target) && length($target);
+
     croak "Odd constructor argument list for logical view '$target'"
         if @$args % 2;
 

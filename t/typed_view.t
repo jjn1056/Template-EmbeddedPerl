@@ -70,18 +70,19 @@ use Template::EmbeddedPerl;
 
     sub build_view {
         my ($self, $name, $args, $context) = @_;
+        my $call = {
+            name => $name,
+            args => {%$args},
+            context => $context,
+        };
+        push @{$self->build_calls}, $call;
         my $class = "Local::View::$name";
         my $view = $class->new(
             %$args,
             root => $context->root_view,
             parent => $context->view,
         );
-        push @{$self->build_calls}, {
-            name => $name,
-            args => {%$args},
-            context => $context,
-            view => $view,
-        };
+        $call->{view} = $view;
         return $view;
     }
 
@@ -228,6 +229,35 @@ throws_ok {
 } qr/Odd constructor argument list for logical view 'HTML::Page'/,
     'a logical view rejects an odd constructor list';
 is(@{$resolver->build_calls}, $build_count, 'odd logical arguments fail before build_view');
+
+my $invalid_child_target = $engine->from_string(
+    q{<%= view $_[0] %>},
+    source => 'invalid-child-target.epl',
+);
+my $scalar_target = 'HTML::Page';
+for my $case (
+    ['undefined target', undef],
+    ['empty logical name', ''],
+    ['hash reference', {}],
+    ['array reference', []],
+    ['scalar reference', \$scalar_target],
+) {
+    my ($description, $target) = @$case;
+    $build_count = @{$resolver->build_calls};
+    throws_ok {
+        $invalid_child_target->_render_with_context(
+            $engine->_new_render_context(view => $root, root_view => $root),
+            {kind => 'root', identifier => 'invalid-child-target', source => 'invalid-child-target.epl'},
+            $target,
+        );
+    } qr/\ALogical view target must be a blessed object or a non-empty logical name/,
+        "$description is rejected with the typed view target contract";
+    is(
+        @{$resolver->build_calls},
+        $build_count,
+        "$description fails before build_view",
+    );
+}
 
 my $without_resolver = Template::EmbeddedPerl->new(
     directories => [$template_directory],
