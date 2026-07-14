@@ -85,6 +85,8 @@ sub write_template ($directory, $identifier, $content) {
     }
 
     sub template_for ($self, $view, $context) {
+        die 'template_for must not be consulted for an explicit Navbar template'
+            if $view->isa('Documentation::View::HTML::Navbar');
         return 'components/contact_item'
             if $view->isa('Documentation::View::HTML::ContactItem');
         return;
