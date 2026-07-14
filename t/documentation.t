@@ -11,15 +11,36 @@ use Template::EmbeddedPerl;
 my $cookbook = File::Spec->catfile(qw(docs cookbook typed-views.md));
 ok(-e $cookbook, 'the typed-view cookbook is present');
 
-sub normalized_document {
+sub read_document {
     my ($path) = @_;
     open my $fh, '<', $path or die "Cannot read $path: $!";
     local $/;
     my $content = <$fh>;
     close $fh or die "Cannot close $path: $!";
-    $content =~ s/^\s*>\s?//gm;
-    $content =~ s/\s+/ /g;
     return $content;
+}
+
+sub markdown_notice_follows_heading {
+    my ($path, $heading, $expected) = @_;
+    my $content = read_document($path);
+    $content =~ /^\Q$heading\E[ \t]*\R((?:[ \t]*\R)*(?:>[^\r\n]*(?:\R|$))+)/m
+        or return;
+    my $notice = $1;
+    $notice =~ s/^>[ \t]?//gm;
+    $notice =~ s/\s+/ /g;
+    $notice =~ s/^\s+|\s+$//g;
+    return $notice eq $expected;
+}
+
+sub pod_notice_follows_heading {
+    my ($path, $heading, $expected) = @_;
+    my $content = read_document($path);
+    $content =~ /^\Q$heading\E[ \t]*\R(?:[ \t]*\R)*([^\r\n]*(?:\R[^\r\n]+)*)/m
+        or return;
+    my $notice = $1;
+    $notice =~ s/\s+/ /g;
+    $notice =~ s/^\s+|\s+$//g;
+    return $notice eq $expected;
 }
 
 my $markdown_notice = q{**Experimental:** Typed view support, including }
@@ -34,16 +55,21 @@ for my $document (
     [cookbook => $cookbook],
 ) {
     ok(
-        index(normalized_document($document->[1]), $markdown_notice) >= 0,
+        markdown_notice_follows_heading(
+            $document->[1],
+            $document->[0] eq 'README' ? '## render\\_view' : '## Typed Views',
+            $markdown_notice,
+        ),
         "$document->[0] marks typed views as experimental",
     );
 }
 
 ok(
-    index(
-        normalized_document(File::Spec->catfile(qw(lib Template EmbeddedPerl.pm))),
+    pod_notice_follows_heading(
+        File::Spec->catfile(qw(lib Template EmbeddedPerl.pm)),
+        '=head2 render_view',
         $pod_notice,
-    ) >= 0,
+    ),
     'module POD marks typed views as experimental',
 );
 
