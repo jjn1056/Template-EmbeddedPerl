@@ -242,10 +242,35 @@ sub default_helpers {
       $context->frame->register_layout($identifier, @args);
       return;
     },
+    content_for       => sub {
+      my ($engine, @args) = @_;
+      my ($name, $callback) = _content_capture_arguments('content_for', @args);
+      my $frame = Template::EmbeddedPerl->_current_render_context('content_for')->frame;
+      my $output = $callback->();
+      $frame->append_content($name, $engine->raw(defined $output ? $output : ''));
+      return;
+    },
+    content_replace   => sub {
+      my ($engine, @args) = @_;
+      my ($name, $callback) = _content_capture_arguments('content_replace', @args);
+      my $frame = Template::EmbeddedPerl->_current_render_context('content_replace')->frame;
+      my $output = $callback->();
+      $frame->replace_content($name, $engine->raw(defined $output ? $output : ''));
+      return;
+    },
+    has_content       => sub {
+      my ($engine, @args) = @_;
+      my ($name) = _content_name_arguments('has_content', @args);
+      return Template::EmbeddedPerl->_current_render_context('has_content')->frame
+        ->has_content($name);
+    },
     yield             => sub {
-      my ($engine) = @_;
+      my ($engine, @args) = @_;
       my $frame = Template::EmbeddedPerl->_current_render_context('yield')->frame;
-      return $engine->raw($frame->default_body);
+      my $output = @args
+        ? $frame->content(_content_name_arguments('yield', @args))
+        : $frame->default_body;
+      return $engine->raw($output);
     },
     to_safe_string    => sub {
       my ($self, @args) = @_;
@@ -256,6 +281,23 @@ sub default_helpers {
       } @args;
     },
   );
+}
+
+sub _content_capture_arguments {
+  my ($helper, @args) = @_;
+  die "Invalid $helper arguments" unless @args == 2;
+  my ($name, $callback) = @args;
+  die "Invalid $helper name" unless defined($name) && !ref($name);
+  die "Invalid $helper callback" unless ref($callback) eq 'CODE';
+  return ($name, $callback);
+}
+
+sub _content_name_arguments {
+  my ($helper, @args) = @_;
+  die "Invalid $helper arguments" unless @args == 1;
+  my ($name) = @args;
+  die "Invalid $helper name" unless defined($name) && !ref($name);
+  return $name;
 }
 
 # Create a new template document in various ways
