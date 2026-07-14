@@ -1,6 +1,7 @@
 # Typed View Composition Design
 
 **Date:** 2026-07-13
+**Revised:** 2026-07-14
 **Status:** Approved design
 
 ## Summary
@@ -10,14 +11,15 @@ distinct operations:
 
 - `partial` renders a simple untyped fragment.
 - `layout` wraps output in a simple untyped template.
-- `view` renders a framework-created typed view object as either a leaf or a
-  wrapper.
+- `view` renders a typed view object as either a leaf or a wrapper. The object
+  may be supplied by the caller or constructed from a logical name.
 
 Typed root views and nested typed views use the same rendering and template
-resolution path. The engine remains independent of Moo and does not construct
-typed views itself. Framework integrations own view construction and provide a
-resolver when an application uses logical view names or custom object-to-template
-mapping.
+resolution path. The engine remains independent of Moo, but provides a
+convention-based constructor for logical view names: it expands the configured
+namespace, loads the class, and calls `new` with the explicit template arguments.
+Applications that need dependency injection can replace only that construction
+step with a `view_factory` callback.
 
 Rails-style default and named content blocks make layouts and wrappers useful
 without requiring callers to manually pass rendered strings. Smart line
@@ -42,6 +44,7 @@ template argument behavior remain compatible.
 - Template::EmbeddedPerl will not become a dependency injection container.
 - The core will not inspect Moo metadata or turn template arguments into Moo
   attributes.
+- The core will not define a general-purpose view resolver protocol.
 - The core will not infer that an arbitrary blessed argument passed to the
   existing `render` method is a view.
 - Typed and untyped rendering will not use separate template languages.
@@ -128,7 +131,7 @@ exception.
 
 A typed view object does not render itself and does not need a reference to the
 engine. It supplies typed state and can optionally identify its template. The
-engine asks the configured view resolver to locate that object's template.
+engine resolves the object's template directly.
 
 The root path:
 
@@ -149,25 +152,18 @@ and the nested path:
 use the same object-to-template resolution operation. Root views are not a
 special untyped case; they can be ordinary pages, leaf views, or typed wrappers.
 
-### Resolver responsibilities
+### Public configuration
 
-The configured resolver is an object with two independent methods:
+The common case needs only template directories and a view namespace:
 
 ```perl
-my $template = $resolver->template_for($view, $context);
-my $view = $resolver->build_view($logical_name, \%args, $context);
+my $engine = Template::EmbeddedPerl->new(
+    directories    => ['templates'],
+    view_namespace => 'MyApp::View',
+);
 ```
 
-`template_for` resolves a view object to a template identifier. `build_view`
-resolves a logical name and constructor arguments to a view object. A resolver
-that only supports preconstructed objects needs only `template_for`; using a
-logical name with it is an error.
-
-The framework integration owns logical-name expansion, class loading,
-construction, dependency injection, and `root`/`parent` relationships. The core
-only requires the resulting object and template identifier.
-
-For example, a framework resolver can expand:
+A logical nested view then expands by convention:
 
 ```text
 HTML::Navbar
@@ -175,13 +171,66 @@ HTML::Navbar
     -> html/navbar.epl
 ```
 
-Without a resolver, standalone object rendering first looks for a `template`
-method on the view. If there is no such method, it uses the engine's configured
-`view_namespace`. The namespace prefix is removed, `::` becomes `/`, and every
-remaining TitleCase or CamelCase package segment is converted to lowercase snake
-case. Acronym runs are kept together, so `HTML`, `HTMLPage`, and `ContactList`
-become `html`, `html_page`, and `contact_list`. The normal file loader adds the
-configured `template_extension`.
+`helpers` remains an independent engine option. A helper provides behavior to
+templates; it does not construct views or choose their templates.
+
+```perl
+my $engine = Template::EmbeddedPerl->new(
+    directories    => ['templates'],
+    view_namespace => 'MyApp::View',
+    helpers => {
+        path_for => sub {
+            my ($engine, $route, @args) = @_;
+            return $router->path_for($route, @args);
+        },
+        format_money => sub {
+            my ($engine, $amount) = @_;
+            return $money->format($amount);
+        },
+    },
+);
+```
+
+These helpers are available alongside `$self` in root views, nested views, typed
+wrappers, layouts, and partials.
+
+An optional `view_factory` callback replaces only logical-name construction:
+
+```perl
+my $engine = Template::EmbeddedPerl->new(
+    directories    => ['templates'],
+    view_namespace => 'MyApp::View',
+    view_factory   => sub {
+        my ($class, $args, $context) = @_;
+
+        return $container->build(
+            $class,
+            %$args,
+            root   => $context->root_view,
+            parent => $context->view,
+        );
+    },
+);
+```
+
+The callback receives the fully expanded class name, a hash reference containing
+only arguments explicitly supplied by the template, and the existing render
+context. It must return a blessed object. The returned object's class may differ
+from the requested class so factories can return subclasses or adapters.
+
+There is no public `view_resolver`, `build_view`, or `template_for` contract.
+External template-selection policy is intentionally deferred until a concrete
+need justifies another extension point.
+
+### Template resolution
+
+Object rendering first looks for a `template` method on the view. A nonempty
+value is authoritative. If the method is absent or returns an empty value, the
+engine uses its configured `view_namespace`: the namespace prefix is removed,
+`::` becomes `/`, and every remaining TitleCase or CamelCase package segment is
+converted to lowercase snake case. Acronym runs are kept together, so `HTML`,
+`HTMLPage`, and `ContactList` become `html`, `html_page`, and `contact_list`.
+The normal file loader adds the configured `template_extension`.
 
 For example:
 
@@ -198,9 +247,7 @@ my $engine = Template::EmbeddedPerl->new(
 
 maps `MyApp::View::HTML::ContactList` to
 `html/contact_list.epl`. Rendering an object with neither an explicit `template`
-method, a resolver result, nor a matching `view_namespace` fails with a clear
-resolution error. Framework adapters can define a different convention through
-`template_for`.
+method nor a class beneath `view_namespace` fails with a clear resolution error.
 
 A view object can explicitly override convention-based lookup with a method:
 
@@ -208,21 +255,22 @@ A view object can explicitly override convention-based lookup with a method:
 sub template { 'components/navigation' }
 ```
 
-An explicit template identifier takes precedence over convention. Resolution
-ultimately delegates loading and compilation to the engine's normal file
-template facilities so template directories, extensions, caching, and source
-diagnostics continue to work.
+An explicit template identifier takes precedence over convention. If that
+identifier cannot be loaded, rendering fails rather than falling back to the
+conventional path. Resolution ultimately delegates loading and compilation to
+the engine's normal file-template facilities so template directories,
+extensions, caching, and source diagnostics continue to work.
 
 Object-to-template resolution uses this fixed precedence:
 
 1. A nonempty value returned by the view object's `template` method.
-2. A nonempty value returned by the configured resolver's `template_for` method.
-3. The configured `view_namespace` convention.
-4. A source-aware resolution error.
+2. The configured `view_namespace` convention.
+3. A source-aware resolution error.
 
-After `build_view` constructs a logical child, that object enters this same
-object-to-template sequence. Logical and preconstructed views therefore cannot
-drift into different template lookup behavior.
+After the default constructor or `view_factory` constructs a logical child,
+that object enters this same object-to-template sequence. Logical and
+preconstructed views therefore cannot drift into different template lookup
+behavior.
 
 ### Template search path
 
@@ -252,22 +300,31 @@ The core accepts both preconstructed objects and logical names:
 %= view 'HTML::Navbar', active_link => 'contacts'
 ```
 
-For an object, the resolver skips construction and performs only template
-lookup. For a logical name, a framework-provided resolver constructs the object.
-If no constructor-capable resolver is configured, logical-name rendering fails
-with a clear error explaining that an object or view resolver is required.
+For a preconstructed object, the engine skips construction and performs only
+template lookup. This applies to both `render_view($object)` and `view $object`;
+neither invokes `view_factory`.
 
-When constructing a nested view, the framework resolver receives:
+For a logical name, the engine validates that the value is a relative Perl
+package name, prefixes `view_namespace`, loads the expanded class, and calls:
 
-- the logical name;
-- the supplied constructor arguments;
-- the current view as `parent`;
-- the top-level typed view as `root`;
-- the active render context for framework-specific dependencies.
+```perl
+$class->new(%explicit_args)
+```
 
-Template::EmbeddedPerl does not mutate a preconstructed object to add `root` or
-`parent`. Framework code must establish those relationships during construction
-when its view model requires them.
+Logical names require `view_namespace`. They cannot supply a fully qualified
+class that bypasses the configured namespace. Class loading uses Perl's normal
+package-to-file mapping. A class that already provides `new`, including a class
+declared in the calling program or test file, is treated as loaded; otherwise
+the engine requires its package file.
+
+When configured, `view_factory` replaces the `new` call but not validation,
+namespace expansion, class loading, object validation, or template selection.
+The context lets an application inject relationships such as `root` and
+`parent`; the default constructor never injects them implicitly.
+
+Template::EmbeddedPerl does not mutate any constructed or preconstructed object
+to add `root`, `parent`, or context. Application code must establish those
+relationships during construction when its view model requires them.
 
 The final code reference passed to `view` is the optional wrapper body. Arguments
 before that callback must be an even-sized constructor list. A preconstructed
@@ -330,7 +387,7 @@ or as a wrapper:
 % }
 ```
 
-For a wrapper, the resolver constructs or accepts the wrapper view before
+For a wrapper, the engine constructs or accepts the wrapper view before
 executing the body callback. The callback receives that object as its argument,
 shown as `$page` above. Perl lexical scoping means `$self` inside the captured
 body remains the calling view. When the wrapper template itself renders,
@@ -433,7 +490,7 @@ be the first executable directive in its template and can occur only once.
 
 `args` binds only the explicit argument list passed to that template. It never
 reads view attributes or creates aliases for Moo methods. Constructor arguments
-passed to a logical `view` call are consumed by the framework resolver and are
+passed to a logical `view` call are consumed by the view constructor and are
 not also passed to the rendered view template. Legacy access through `@_`,
 `shift`, and configured `prepend` continues to work in templates that do not opt
 into `args`.
@@ -486,22 +543,27 @@ Ordinary expression values remain subject to the configured auto-escaping rules.
 Composition failures include the logical operation and complete source stack.
 The implementation must distinguish at least:
 
-- unknown logical view names;
-- logical names used without a constructor-capable resolver;
-- a resolver returning no object or template identifier;
+- invalid logical view names;
+- logical view names used without `view_namespace`;
+- class-loading failures that identify both logical and expanded names;
+- a default constructor failure, including Moo required/type constraint errors;
+- a `view_factory` exception;
+- a `view_factory` returning an unblessed value;
+- a preconstructed object outside `view_namespace` with no explicit template;
 - a missing template for a resolved view;
-- constructor failures, including Moo required/type constraint errors;
 - recursive partial, layout, or view rendering;
 - runtime failures inside a nested template or captured body.
 
 Errors preserve the existing source-line diagnostics and add the chain of
 templates/views that led to the failure. Cleanup is exception-safe: active
 renderer state, default bodies, named content, and render stacks are restored or
-discarded before the exception escapes.
+discarded before the exception escapes. A missing-template error includes the
+derived or explicit identifier and every configured candidate path in priority
+order. Constructor and factory errors retain the original exception text.
 
 ## Compatibility
 
-This feature is additive:
+Relative to the released API, this feature is additive:
 
 - Existing `render($template, @args)` behavior is unchanged.
 - Existing compiled objects still support `render(@args)`.
@@ -509,9 +571,10 @@ This feature is additive:
   block capture continue to work.
 - Blessed legacy arguments are never treated as views implicitly.
 - Moo is a test/development dependency for examples, not a runtime dependency.
-- Framework integrations can opt into logical-name construction while standalone
-  users can render preconstructed objects with convention or explicit template
-  lookup.
+- Applications can use convention-based logical construction, replace
+  construction with `view_factory`, or render preconstructed objects.
+- The unreleased `view_resolver`, `build_view`, and `template_for` interfaces are
+  removed without a compatibility shim.
 
 ## Test Strategy
 
@@ -522,14 +585,21 @@ Coverage will be organized around public behavior rather than internal classes.
 Tests define small local Moo classes and construct real instances. Cases include:
 
 - rendering a typed root view through `render_view`;
-- required Moo attributes and method access through `$self`;
+- required Moo attributes, defaults, coercion/type failures, constructor
+  exceptions, and method access through `$self`;
 - TitleCase/CamelCase-to-snake-case convention lookup, including acronym runs;
-- explicit `template` lookup and resolver precedence;
+- explicit `template` lookup, precedence, and no fallback after an explicit
+  template fails to load;
 - first-match template search across multiple configured directories;
 - fallback to lower-priority template directories and complete missing paths;
 - a preconstructed nested view;
-- a logical nested view constructed by a test resolver;
-- correct `root` and `parent` values across multiple nesting levels;
+- a logical nested view constructed by default through `new`;
+- a `view_factory` receiving the expanded class, explicit arguments, and current
+  render context;
+- a `view_factory` injecting `root` and `parent` across multiple nesting levels;
+- preconstructed objects bypassing `view_factory`;
+- invalid logical names, missing namespace, class-loading errors, and unblessed
+  factory results;
 - a typed leaf view;
 - a typed wrapper whose callback receives the wrapper object;
 - lexical caller `$self` in a wrapper body and wrapper `$self` in its template;
@@ -562,6 +632,8 @@ Cases include:
 - legacy objects in `@_` not becoming `$self`;
 - `shift`, `@_`, and `prepend` inside existing templates;
 - custom helpers retaining their engine/context receiver;
+- helpers used from typed roots, nested views, typed wrappers, layouts, and
+  partials;
 - typed and legacy `to_safe_string` context behavior;
 - no double escaping for partials, views, layouts, and yields;
 - ordinary values remaining escaped when auto-escaping is enabled;
@@ -578,28 +650,32 @@ a small Moo view class. It will show:
 1. A typed root page constructed by application/framework code.
 2. The snake-case class-to-template convention, ordered template search path,
    and an explicit `template` override.
-3. A logical child view created by a framework resolver.
+3. A logical Moo child view constructed automatically through `new`.
 4. A preconstructed child view.
-5. A typed wrapper with `root` and `parent` relationships.
-6. Nested wrappers and named CSS/JavaScript content.
-7. Equivalent simple `partial` and `layout` examples for cases where a class is
+5. A `view_factory` dependency-injection example using the class, explicit
+   arguments, and render context.
+6. A typed wrapper with injected `root` and `parent` relationships.
+7. Nested wrappers and named CSS/JavaScript content.
+8. Equivalent simple `partial` and `layout` examples for cases where a class is
    unnecessary.
 
 The cookbook will state clearly that Moo is illustrative, any blessed object can
-serve as a typed view, and object construction remains an application/framework
-responsibility.
+serve as a typed view, default logical construction is ordinary `new`, and
+applications can take responsibility for construction with `view_factory` when
+needed.
 
 ## Delivery Boundaries
 
 Implementation should proceed in layers that remain testable:
 
 1. Render context/frame and explicit `render_view` support.
-2. Object-to-template resolution and framework resolver protocol.
+2. Object-to-template resolution and convention-based logical construction.
 3. `partial`, `layout`, and `view` composition.
 4. Default/named content blocks and nesting cleanup.
 5. Smart line directives and declarative untyped arguments.
 6. Error-stack integration, compatibility hardening, and documentation.
 
-The implementation plan can split these layers further, but it must not combine
-Moo construction into the core or create different resolution rules for root and
+The implementation plan can split these layers further, but it must not add a
+Moo runtime dependency, inject undeclared constructor arguments, add external
+template-selection policy, or create different resolution rules for root and
 nested typed views.
