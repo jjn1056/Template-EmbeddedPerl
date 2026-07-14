@@ -246,6 +246,7 @@ sub default_helpers {
 sub from_string {
   my ($proto, $template, %args) = @_;
   my $source = delete($args{source});
+  my $identifier = delete($args{identifier});
   my $self = ref($proto) ? $proto : $proto->new(%args);
 
   my $digest;
@@ -259,6 +260,7 @@ sub from_string {
         code => $cached->{code},
         yat => $self,
         source => $source,
+        identifier => $identifier,
       }, 'Template::EmbeddedPerl::Compiled';     
     }  
   }
@@ -296,6 +298,7 @@ sub from_string {
     code => $code,
     yat => $self,
     source => $source,
+    identifier => $identifier,
   }, 'Template::EmbeddedPerl::Compiled'; 
 }
 
@@ -336,21 +339,64 @@ sub from_fh {
 sub from_file {
   my ($proto, $file_proto, @args) = @_;
   my $self = ref($proto) ? $proto : $proto->new(@args);
-  my $file = "${file_proto}.@{[ $self->{template_extension} ]}";
-  my @directories = map {
-    (ref($_)||'') eq 'ARRAY' ? File::Spec->catdir(@$_) : $_
-  } @{ $self->{directories} };
+  my $path = $self->_resolve_template_file($file_proto);
+  open my $fh, '<', $path or die "Failed to open file $path: $!";
+  my %args = (@args, source => $path, identifier => $file_proto);
+  return $self->from_fh($fh, %args);
+}
 
-  # find if it exists in the directories
-  foreach my $dir (@directories) {
-    my $path = File::Spec->catfile($dir, $file);
-    if (-e $path) {
-      open my $fh, '<', $path or die "Failed to open file $path: $!";
-      my %args = (@args, source => $path);
-      return $self->from_fh($fh, %args);
-    }
+sub _template_candidates {
+  my ($self, $identifier) = @_;
+  my $file = "$identifier.$self->{template_extension}";
+  return map {
+    File::Spec->catfile(ref($_) eq 'ARRAY' ? File::Spec->catdir(@$_) : $_, $file)
+  } @{ $self->{directories} };
+}
+
+sub _resolve_template_file {
+  my ($self, $identifier) = @_;
+  my @candidates = $self->_template_candidates($identifier);
+  return $_ for grep { -e $_ } @candidates;
+  die "Template '$identifier' not found; searched: " . join(', ', @candidates) . "\n";
+}
+
+sub _snake_case_segment {
+  my ($self, $segment) = @_;
+  $segment =~ s/([A-Z]+)([A-Z][a-z])/$1_$2/g;
+  $segment =~ s/([a-z0-9])([A-Z])/$1_$2/g;
+  return lc $segment;
+}
+
+sub _class_to_template {
+  my ($self, $class) = @_;
+  my $namespace = $self->{view_namespace};
+  my $prefix = defined($namespace) ? "$namespace\::" : undef;
+
+  die "Cannot resolve template for view class '$class'\n"
+    unless defined($prefix) && index($class, $prefix) == 0;
+
+  my $suffix = substr($class, length($prefix));
+  die "Cannot resolve template for view class '$class'\n" unless length($suffix);
+
+  return join '/', map { $self->_snake_case_segment($_) } split /::/, $suffix;
+}
+
+sub _template_for_view {
+  my ($self, $view, $context) = @_;
+  my $class = Scalar::Util::blessed($view) || ref($view) || "$view";
+
+  if (Scalar::Util::blessed($view) && $view->can('template')) {
+    my $template = $view->template;
+    return $template if defined($template) && length($template);
   }
-  die "File $file not found in directories: @{[ join ', ', @directories ]}";
+
+  my $resolver = $self->{view_resolver};
+  if ($resolver && $resolver->can('template_for')) {
+    my $template = $resolver->template_for($view, $context);
+    return $template if defined($template) && length($template);
+  }
+
+  return $self->_class_to_template($class);
 }
 
 # Methods to parse and compile the template

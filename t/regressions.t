@@ -178,7 +178,7 @@ use Template::EmbeddedPerl;
     eval { $template->from_file('missing'); 1 } or $object_error = $@;
     like(
         $object_error,
-        qr/\QFile missing.epl not found in directories: $dir\E/,
+        qr/\QTemplate 'missing' not found; searched: $dir\/missing.epl\E/,
         'object from_file reports missing template with directories',
     );
     unlike($object_error, qr/strict refs/, 'object from_file does not die with strict refs error');
@@ -193,7 +193,7 @@ use Template::EmbeddedPerl;
     } or $class_error = $@;
     like(
         $class_error,
-        qr/\QFile missing.epl not found in directories: $dir\E/,
+        qr/\QTemplate 'missing' not found; searched: $dir\/missing.epl\E/,
         'class from_file reports missing template with directories',
     );
     unlike($class_error, qr/strict refs|ARRAY\(/, 'class from_file reports normalized directories');
