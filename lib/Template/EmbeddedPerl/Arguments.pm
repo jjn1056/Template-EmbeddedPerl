@@ -30,14 +30,16 @@ sub rewrite {
         _error('args directive may only appear once', $line_number + 1);
     }
 
-    my $generated = _generate_bindings($declaration, $start + 1);
     my $expected_newlines = $declaration =~ tr/\n//;
+    my $line_boundary = $declaration =~ s/\n\z// ? "\n" : '';
+    my $generated = _generate_bindings($declaration, $start + 1);
     my $actual_newlines = $generated =~ tr/\n//;
+    my $generated_newlines = $expected_newlines - ($line_boundary eq "\n" ? 1 : 0);
     _error('args rewrite could not preserve source lines', $start + 1)
-        if $actual_newlines > $expected_newlines;
-    $generated .= "\n" x ($expected_newlines - $actual_newlines);
+        if $actual_newlines > $generated_newlines;
+    $generated .= "\n" x ($generated_newlines - $actual_newlines);
 
-    splice @lines, $start, $end - $start + 1, "<%${generated}-%>";
+    splice @lines, $start, $end - $start + 1, "<%${generated}-%>${line_boundary}";
     return (join('', @lines), 1);
 }
 

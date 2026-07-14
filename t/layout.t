@@ -42,6 +42,17 @@ my $single_output = "<!doctype html><title>Contacts</title><body><main>Contacts<
 is($single->render, $single_output, 'a layout wraps the rendered body');
 is($single->render, $single_output, 'layout state does not leak between top-level renders');
 
+my $args_then_layout = $engine->from_string(<<'EPL', source => 'pages/args-layout.epl');
+% args $title
+% layout q(layouts/application), title => $title
+<main>Contacts</main>
+EPL
+is(
+    $args_then_layout->render(title => 'Contacts'),
+    $single_output,
+    'an args rewrite preserves the following smart layout directive',
+);
+
 my $default_title = $engine->from_string(<<'EPL', source => 'pages/default-title.epl');
 % layout 'layouts/application'
 body

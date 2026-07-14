@@ -110,6 +110,17 @@ throws_ok {
     $source_validation->render(name => 'Jane', name => 'John');
 } qr/Duplicate template argument 'name' at views\/argument-validation\.epl line 1/;
 
+my $following_directive_error = $engine->from_string(
+    <<'EPL', source => 'views/argument-following-directive.epl',
+% args $name
+% die "following directive"
+EPL
+);
+
+throws_ok {
+    $following_directive_error->render(name => 'Jane');
+} qr/following directive at views\/argument-following-directive\.epl line 2/;
+
 my $multiline = $engine->from_string(<<'EPL');
 # argument declaration follows a template comment
 
