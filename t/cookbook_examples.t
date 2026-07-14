@@ -252,4 +252,32 @@ like(
     'cookbook links framework authors to typed views',
 );
 
+my $typed_views_path = File::Spec->catfile(
+    $root, qw(lib Template EmbeddedPerl Cookbook TypedViews.pod),
+);
+ok(-e $typed_views_path, 'installed typed-view cookbook POD exists');
+
+my $typed_views = -e $typed_views_path ? read_file($typed_views_path) : '';
+for my $heading (
+    'WHY INTRODUCE A TYPED VIEW?',
+    'THE ROOT VIEW',
+    'TYPED CHILD VIEWS',
+    'WRAPPER VIEWS',
+    'INJECTING ROOT AND PARENT',
+    'COMPOSING THE VIEW TREE',
+    'CHOOSING BETWEEN BOTH DESIGNS',
+) {
+    like($typed_views, qr/^=head1 \Q$heading\E$/m, "typed-view cookbook contains $heading");
+}
+
+like(
+    $typed_views,
+    qr/B<Experimental:> Typed view support, including C<render_view>, C<view>, C<view_namespace>, and C<view_factory>, may change as real-world integration needs become clearer\./,
+    'typed-view POD carries the exact experimental notice',
+);
+ok(
+    !-e File::Spec->catfile($root, qw(docs cookbook typed-views.md)),
+    'old Markdown cookbook is removed after migration',
+);
+
 done_testing;

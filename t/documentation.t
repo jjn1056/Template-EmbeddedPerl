@@ -8,8 +8,10 @@ use Moo;
 use Test::Most;
 use Template::EmbeddedPerl;
 
-my $cookbook = File::Spec->catfile(qw(docs cookbook typed-views.md));
-ok(-e $cookbook, 'the typed-view cookbook is present');
+my $cookbook = File::Spec->catfile(
+    qw(lib Template EmbeddedPerl Cookbook TypedViews.pod),
+);
+ok(-e $cookbook, 'the installed typed-view cookbook is present');
 
 sub read_document {
     my ($path) = @_;
@@ -50,19 +52,23 @@ my $pod_notice = q{B<Experimental:> Typed view support, including }
     . q{C<render_view>, C<view>, C<view_namespace>, and C<view_factory>, may change }
     . q{as real-world integration needs become clearer.};
 
-for my $document (
-    [README => 'README.mkdn'],
-    [cookbook => $cookbook],
-) {
-    ok(
-        markdown_notice_follows_heading(
-            $document->[1],
-            $document->[0] eq 'README' ? '## render\\_view' : '## Typed Views',
-            $markdown_notice,
-        ),
-        "$document->[0] marks typed views as experimental",
-    );
-}
+ok(
+    markdown_notice_follows_heading(
+        'README.mkdn',
+        '## render\\_view',
+        $markdown_notice,
+    ),
+    'README marks typed views as experimental',
+);
+
+ok(
+    pod_notice_follows_heading(
+        $cookbook,
+        '=head1 DESCRIPTION',
+        $pod_notice,
+    ),
+    'cookbook marks typed views as experimental',
+);
 
 ok(
     pod_notice_follows_heading(
