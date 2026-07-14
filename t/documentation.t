@@ -63,6 +63,22 @@ sub write_template {
 }
 
 {
+    package Documentation::View::HTML::ZeroFactoryPage;
+    use Moo;
+
+    has title => (is => 'ro', required => 1);
+}
+
+{
+    package Documentation::View::HTML::ZeroFactoryItem;
+    use Moo;
+
+    has label => (is => 'ro', required => 1);
+
+    sub template { 'components/zero_factory_item' }
+}
+
+{
     package Documentation::View::HTML::HelperMatrix;
     use Moo;
 
@@ -127,6 +143,14 @@ write_template($first, 'components/contact_item', <<'EPL');
 <li class="contact" data-source="object"><%= typed_label $self->label %> root=<%= $self->root ? $self->root->title : 'none' %> parent=<%= $self->parent ? $self->parent->title : 'none' %></li>
 EPL
 
+write_template($first, 'html/zero_factory_page', <<'EPL');
+<section class="zero-factory"><%= view 'HTML::ZeroFactoryItem', label => $self->title %></section>
+EPL
+
+write_template($first, 'components/zero_factory_item', <<'EPL');
+<span class="zero-factory-item"><%= $self->label %></span>
+EPL
+
 write_template(
     $first,
     'html/helper_matrix',
@@ -171,6 +195,21 @@ $untyped_engine->from_file('pages/index')->render(
     subtitle => undef,
 );
 is($lazy_default_calls, 1, 'an explicit undef does not evaluate a lazy argument default');
+
+my $zero_factory_engine = Template::EmbeddedPerl->new(
+    directories => [$first, $second],
+    auto_escape => 1,
+    smart_lines => 1,
+    view_namespace => 'Documentation::View',
+);
+
+is(
+    $zero_factory_engine->render_view(
+        Documentation::View::HTML::ZeroFactoryPage->new(title => '<Simple>'),
+    ),
+    "<section class=\"zero-factory\"><span class=\"zero-factory-item\">&lt;Simple&gt;</span>\n</section>\n",
+    'logical children without a view factory receive only their explicitly supplied template arguments',
+);
 
 my @factory_calls;
 my $typed_engine = Template::EmbeddedPerl->new(

@@ -95,6 +95,62 @@ as `$self`.
 These complete Moo classes are illustrative. An application may use any other
 object system that returns blessed objects from its constructors.
 
+### Default Logical Children
+
+Without a factory, a logical child is constructed with only the values supplied
+by its `view` call. Its constructor must therefore require only those template
+arguments.
+
+```perl
+package MyApp::View::HTML::SimplePage;
+use v5.40;
+use Moo;
+
+has title => (is => 'ro', required => 1);
+
+package MyApp::View::HTML::SimpleItem;
+use v5.40;
+use Moo;
+
+has label => (is => 'ro', required => 1);
+
+sub template { 'components/simple_item' }
+```
+
+This complete flow has no `view_factory` configuration. The logical item
+receives its required `label` directly from the template.
+
+```perl
+my $simple_engine = Template::EmbeddedPerl->new(
+    directories => ['/srv/app/templates', '/srv/shared/templates'],
+    auto_escape => 1,
+    smart_lines => 1,
+    preamble => 'use v5.40;',
+    view_namespace => 'MyApp::View',
+);
+
+my $html = $simple_engine->render_view(
+    MyApp::View::HTML::SimplePage->new(title => 'Contacts'),
+);
+```
+
+`html/simple_page.epl`:
+
+```epl
+<section><%= view 'HTML::SimpleItem', label => $self->title %></section>
+```
+
+`components/simple_item.epl`:
+
+```epl
+<span><%= $self->label %></span>
+```
+
+### Factory-Backed Wrapper Tree
+
+When logical children require injected `root` and `parent` values, configure a
+factory in the engine before calling `render_view`.
+
 ```perl
 package MyApp::View::HTML::ContactList;
 use v5.40;
@@ -150,13 +206,13 @@ Each package segment is converted independently: `HTML` becomes `html`,
 `HTMLPage` becomes `html_page`, and `ContactList` becomes `contact_list`.
 
 For a logical call such as `view 'HTML::Navbar', active => 'contacts'`, the
-engine prefixes `view_namespace`, loads `MyApp::View::HTML::Navbar`, and calls
-`->new(active => 'contacts')`. Moo remains optional; the engine only relies on
-an ordinary constructor returning a blessed object.
+engine prefixes `view_namespace` and loads `MyApp::View::HTML::Navbar`. Moo
+remains optional; the engine only relies on an ordinary constructor returning a
+blessed object.
 
-Create the engine and root in application code. The root's lazy `navbar` is a
-preconstructed child. The item is a logical child, so the engine constructs it
-with its supplied arguments.
+Create the factory-backed engine and root in application code. The root's lazy
+`navbar` is a preconstructed child. The item and wrapper are logical children,
+so the factory adds their `root` and `parent` constructor arguments.
 
 ```perl
 my $engine = Template::EmbeddedPerl->new(
@@ -165,11 +221,13 @@ my $engine = Template::EmbeddedPerl->new(
     smart_lines => 1,
     preamble => 'use v5.40;',
     view_namespace => 'MyApp::View',
-    helpers => {
-        path_for => sub {
-            my ($engine, $route, @args) = @_;
-            return $router->path_for($route, @args);
-        },
+    view_factory => sub {
+        my ($class, $args, $context) = @_;
+        return $class->new(
+            %$args,
+            root => $context->root_view,
+            parent => $context->view,
+        );
     },
 );
 
@@ -236,21 +294,10 @@ The engine resolves a nonempty view `template` method first, then the
 templates, and contact list/page use convention lookup. All paths use the same
 ordered `directories` search path.
 
-When logical children need dependency injection, configure the optional factory
-once. `$args` contains only values supplied by the template,
+The configured factory receives `$args`, which contains only values supplied by
+the template,
 `$context->view` is the current parent, and `$context->root_view` is the
 original typed root. Preconstructed objects bypass this callback.
-
-```perl
-view_factory => sub {
-    my ($class, $args, $context) = @_;
-    return $class->new(
-        %$args,
-        root => $context->root_view,
-        parent => $context->view,
-    );
-},
-```
 
 ## Failures and Reuse
 
