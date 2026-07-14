@@ -177,15 +177,21 @@ HTML::Navbar
 
 Without a resolver, standalone object rendering first looks for a `template`
 method on the view. If there is no such method, it uses the engine's configured
-`view_namespace`. The namespace prefix is removed, each remaining CamelCase
-package segment is converted to lowercase snake case, and `::` becomes `/`.
-The normal file loader adds the configured `template_extension`.
+`view_namespace`. The namespace prefix is removed, `::` becomes `/`, and every
+remaining TitleCase or CamelCase package segment is converted to lowercase snake
+case. Acronym runs are kept together, so `HTML`, `HTMLPage`, and `ContactList`
+become `html`, `html_page`, and `contact_list`. The normal file loader adds the
+configured `template_extension`.
 
 For example:
 
 ```perl
 my $engine = Template::EmbeddedPerl->new(
-    directories    => ['templates'],
+    directories => [
+        '/srv/myapp/templates',
+        '/srv/theme/templates',
+        '/srv/shared/templates',
+    ],
     view_namespace => 'MyApp::View',
 );
 ```
@@ -217,6 +223,25 @@ Object-to-template resolution uses this fixed precedence:
 After `build_view` constructs a logical child, that object enters this same
 object-to-template sequence. Logical and preconstructed views therefore cannot
 drift into different template lookup behavior.
+
+### Template search path
+
+The existing `directories` configuration is the template search path. It has
+the same precedence behavior as the UNIX `PATH`: each directory is tested in
+the declared order and the first matching template wins. Given the configuration
+above, `html/contact_list.epl` is searched as:
+
+```text
+/srv/myapp/templates/html/contact_list.epl
+/srv/theme/templates/html/contact_list.epl
+/srv/shared/templates/html/contact_list.epl
+```
+
+This ordering lets an application override a theme or shared template without
+copying the rest of that template tree. Explicit template identifiers,
+convention-derived view identifiers, partials, layouts, and typed views all use
+the same search path and priority rules. A missing-template error reports the
+logical identifier and every candidate path in search order.
 
 ### Object construction
 
@@ -272,14 +297,16 @@ Partials cannot establish a new typed contract. A caller that needs a different
 `layout` selects an untyped outer template for the current rendered body:
 
 ```epl
-% layout 'layouts/application'
+% layout 'layouts/application', title => 'Contacts'
 ```
 
 The layout inherits the caller's `$self` and reads body and named content from
-the current frame. Layouts can nest; each outer layout consumes the completed
-inner result as its default content. The implementation defines deterministic
-ordering so multiple declarations wrap in declaration order, with the first
-declared layout outermost.
+the current frame. Named arguments after the template identifier belong to the
+layout template and are bound by its `args` declaration just like partial
+arguments. Layouts can nest; each outer layout consumes the completed inner
+result as its default content. The implementation defines deterministic ordering
+so multiple declarations wrap in declaration order, with the first declared
+layout outermost.
 
 Layout recursion is detected and reported with the complete template stack.
 
@@ -385,9 +412,24 @@ and layouts to reduce manual `shift` boilerplate:
 
 Arguments are supplied as a named key/value list. A declaration without a
 default is required; a declaration with `= expression` uses that expression when
-the key is absent. Odd argument lists, missing required arguments, duplicate
-keys, and unknown keys produce source-aware errors. The directive must be the
-first executable directive in its template and can occur only once.
+the key is absent. Passing an explicit `undef` does not activate a default.
+Defaults are evaluated at render time in declaration order and can reference
+arguments declared earlier.
+
+An anonymous-subroutine default is a lazy default factory for more complex
+initialization:
+
+```epl
+% args $contacts, $title = sub {
+%   my $count = @$contacts;
+%   return $count == 1 ? 'One contact' : "$count contacts";
+% }
+```
+
+The factory runs once only when its argument is absent, and its return value is
+assigned to the argument. Odd argument lists, missing required arguments,
+duplicate keys, and unknown keys produce source-aware errors. The directive must
+be the first executable directive in its template and can occur only once.
 
 `args` binds only the explicit argument list passed to that template. It never
 reads view attributes or creates aliases for Moo methods. Constructor arguments
@@ -481,7 +523,10 @@ Tests define small local Moo classes and construct real instances. Cases include
 
 - rendering a typed root view through `render_view`;
 - required Moo attributes and method access through `$self`;
-- convention-based and explicit `template` lookup;
+- TitleCase/CamelCase-to-snake-case convention lookup, including acronym runs;
+- explicit `template` lookup and resolver precedence;
+- first-match template search across multiple configured directories;
+- fallback to lower-priority template directories and complete missing paths;
 - a preconstructed nested view;
 - a logical nested view constructed by a test resolver;
 - correct `root` and `parent` values across multiple nesting levels;
@@ -521,7 +566,9 @@ Cases include:
 - no double escaping for partials, views, layouts, and yields;
 - ordinary values remaining escaped when auto-escaping is enabled;
 - legacy and smart line whitespace behavior across line endings and edge cases;
-- named `args`, defaults, validation errors, and isolation from Moo attributes.
+- named `args`, expression and lazy-subroutine defaults, `undef`, validation
+  errors, and isolation from Moo attributes;
+- named arguments passed independently to layouts and partials.
 
 ## Documentation
 
@@ -529,7 +576,8 @@ The public documentation will include a cookbook section that builds and renders
 a small Moo view class. It will show:
 
 1. A typed root page constructed by application/framework code.
-2. The class-to-template convention and an explicit `template` override.
+2. The snake-case class-to-template convention, ordered template search path,
+   and an explicit `template` override.
 3. A logical child view created by a framework resolver.
 4. A preconstructed child view.
 5. A typed wrapper with `root` and `parent` relationships.
