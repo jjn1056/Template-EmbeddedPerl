@@ -42,18 +42,17 @@ and data sections.  See the rest of the docs for more information.
 within template files or strings. It provides methods for creating templates
 from various sources, including strings, file handles, and data sections.
 
-The module also supports features like helper functions, automatic escaping,
-and customizable template compilation namespaces.
+The module also supports helper functions, automatic escaping, declarative
+named template arguments, and customizable template compilation namespaces.
+It can compose untyped pages with partials and layouts, and can render
+preconstructed typed view objects through an explicit `render_view` API.
 
 Its quite similar to [Mojo::Template](https://metacpan.org/pod/Mojo%3A%3ATemplate) and other embedded Perl template engines
 but its got one trick the others can't do (see [EXCUSE](https://metacpan.org/pod/EXCUSE) below).
 
-**NOTE**: This is a very basic template engine, which doesn't have lots of things
-you probably need like template includes / partials and so forth.  That's by
-design since I plan to wrap this in a [Catalyst](https://metacpan.org/pod/Catalyst) view which will provide
-all those features.  If you want to use this stand alone you might need to add
-those features yourself (or ideally put something on CPAN that wraps this to 
-provide those features).  Or you can pay me to do it for you ;)
+For complete runnable examples of `smart_lines`, `args`, partials, layouts,
+named content blocks, ordered template directories, and typed views, see the
+[typed views cookbook](docs/cookbook/typed-views.md).
 
 # ACKNOWLEDGEMENTS
 
@@ -153,6 +152,16 @@ least potentially easier to read.  For example:
     &lt;p><%= $item %>&lt;/p>
 % }
 
+Set `smart_lines => 1` to make each line starting with `%` or `%=` a complete
+directive without needing a trailing delimiter. This works well with named
+template arguments:
+
+    % args $name, $greeting = 'Hello'
+    <p><%= $greeting %>, <%= $name %></p>
+
+The full composition and typed-view examples are in the
+[typed views cookbook](docs/cookbook/typed-views.md).
+
 You can add '=' to the closing tag to indicate that the expression should be trimmed of leading
 and trailing whitespace. This is useful when you want to include the expression in a block of text.
 where you don't want the whitespace to affect the output.
@@ -236,6 +245,30 @@ Creates a new `Template::EmbeddedPerl` object. Accepts the following arguments:
 
     I don't do anything smart to make sure you don't reference templates in dangerous places.
     So be careful to make sure you don't let application users specify the template path.
+
+    The same ordered lookup is used by partials, layouts, explicit typed-view
+    templates, convention-based typed-view templates, and resolver results.
+
+- `smart_lines`
+
+    Boolean indicating whether full lines beginning with `%` or `%=` are complete
+    Perl directives. Default is `0`. This is useful with the `args`, `layout`,
+    `content_for`, and `view` helpers.
+
+- `view_namespace`
+
+    Namespace prefix used to derive a template identifier for a typed view when
+    neither its `template` method nor a view resolver supplies one. The matching
+    prefix is removed, `::` becomes `/`, and each CamelCase package segment becomes
+    lowercase snake case. For example, `MyApp::View::HTML::ContactList` maps to
+    `html/contact_list`.
+
+- `view_resolver`
+
+    Optional object implementing `template_for($view, $context)` and, for logical
+    child views, `build_view($logical_name, \%args, $context)`. The resolver owns
+    construction and relationships such as `root` and `parent`; the engine only
+    accepts the resulting blessed object.
 
 - `template_extension`
 
@@ -419,6 +452,19 @@ Useful if you want to load templates from the same directory as your package.
 Compiles and executes the provided template content with the given arguments. You might
 want to enable the cache if you are doing this.
 
+Passing a blessed value to this legacy API remains ordinary positional input in
+`@_`; it does not become a typed `$self`.
+
+## render\_view
+
+    my $output = $template->render_view($view);
+
+Renders a preconstructed blessed typed view object. In its template, lexical
+`$self` is the active view. Use the `view` helper for nested typed objects and
+the `partial` or `layout` helpers for untyped composition. See the
+[typed views cookbook](docs/cookbook/typed-views.md) for the resolver protocol,
+template precedence, and complete examples.
+
 # HELPER FUNCTIONS
 
 The module provides a set of default helper functions that can be used in templates.
@@ -459,6 +505,31 @@ The module provides a set of default helper functions that can be used in templa
 - `trim`
 
     Trims leading and trailing whitespace from a string.
+
+- `partial`
+
+    `partial $identifier, %args` renders an untyped template immediately. Its
+    rendered result is safe and is not escaped a second time.
+
+- `layout`
+
+    `layout $identifier, %args` registers an untyped layout around the current
+    output. The first declared layout is outermost.
+
+- `yield`
+
+    `yield` returns the current body; `yield $name` returns named content.
+
+- `content_for`, `content_replace`, `has_content`
+
+    Capture, replace, and test named content blocks in the current render frame.
+
+- `view`
+
+    `view $object` renders a preconstructed child; `view $logical_name, %args`
+    asks `view_resolver->build_view` to construct one. A final coderef is a
+    wrapper body; inside it `$self` remains the caller and the callback argument
+    is the new wrapper.
 
 # ERROR HANDLING
 

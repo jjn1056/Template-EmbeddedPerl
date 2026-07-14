@@ -1,5 +1,10 @@
 The following logs changes for the CPAN distribution Template-EmbeddedPerl
 
+{{$NEXT}}
+          - Add smart lines and declarative named template arguments.
+          - Add partials, layouts, default/named content blocks, and typed views.
+          - Add ordered view-template resolution and nested render diagnostics.
+
 0.001015 07 December 2025
           - fixed bug when > or < appeared in a multiline <% .. %> block
 

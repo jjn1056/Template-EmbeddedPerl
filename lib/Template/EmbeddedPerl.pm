@@ -936,6 +936,21 @@ least potentially easier to read.  For example:
     <p><%= $item %></p>
 % }
 
+=head2 Smart Lines and Named Arguments
+
+Set C<smart_lines> to a true value to make a line beginning with C<%> or C<%=>
+a complete directive without a trailing delimiter. This is especially useful
+for declarative named template arguments:
+
+  % args $name, $greeting = 'Hello', $heading = sub { "Hello, $name" }
+  <p><%= $heading %></p>
+
+C<args> must be the first executable directive. An argument without a default
+is required; a scalar expression supplies a default; a coderef is a lazy
+default evaluated only when its argument is absent. An explicit C<undef> is a
+supplied value and does not evaluate a lazy default. Render arguments are named
+key/value pairs when a template declares C<args>.
+
 
 You can add '=' to the closing tag to indicate that the expression should be trimmed of leading
 and trailing whitespace. This is useful when you want to include the expression in a block of text.
@@ -1048,6 +1063,36 @@ of the path to the directory.  Directories will be searched in order listed.
 
 I don't do anything smart to make sure you don't reference templates in dangerous places.
 So be careful to make sure you don't let application users specify the template path.
+
+The first matching file wins. Partials, layouts, explicit typed-view templates,
+resolver-supplied typed-view templates, and convention-derived typed-view
+templates use this same ordered search path.
+
+=item * C<smart_lines>
+
+Boolean indicating whether a line beginning with C<%> or C<%=> is a complete
+directive. Default is C<0>. See L</Smart Lines and Named Arguments>.
+
+=item * C<view_namespace>
+
+Optional namespace prefix for convention-based typed-view template lookup. When
+a view has no explicit template and a resolver supplies none, the matching
+prefix is removed, C<::> becomes C</>, and each remaining CamelCase segment is
+converted to lowercase snake case. Acronym runs stay together: C<HTML>,
+C<HTMLPage>, and C<ContactList> become C<html>, C<html_page>, and
+C<contact_list>.
+
+For example, C<MyApp::View::HTML::ContactList> with
+C<view_namespace =E<gt> 'MyApp::View'> resolves C<html/contact_list> before the
+normal C<template_extension> is added.
+
+=item * C<view_resolver>
+
+Optional object used for typed views. C<template_for($view, $context)> may
+return a template identifier. C<build_view($logical_name, \%args, $context)>
+constructs a nested logical view. Construction, class loading, dependency
+injection, and C<root>/C<parent> relationships belong to the resolver, not the
+engine.
 
 =item * C<template_extension>
 
@@ -1339,6 +1384,45 @@ Useful if you want to load templates from the same directory as your package.
 Compiles and executes the provided template content with the given arguments. You might
 want to enable the cache if you are doing this.
 
+Compatibility note: C<render> and C<Template::EmbeddedPerl::Compiled::render>
+keep every legacy argument, including a blessed first argument, in C<@_>. They
+do not infer a typed C<$self>.
+
+=head2 render_view
+
+  my $output = $template->render_view($view);
+
+Renders a preconstructed blessed view object. Its template receives that object
+as lexical C<$self>. A non-blessed value is an error. Root and nested views use
+the same template precedence:
+
+=over 4
+
+=item 1.
+
+A nonempty C<< $view->template >> result.
+
+=item 2.
+
+A nonempty C<< $resolver->template_for($view, $context) >> result.
+
+=item 3.
+
+The C<view_namespace> convention.
+
+=back
+
+Use the C<view> helper for a nested typed object. C<< view $object >> renders a
+preconstructed child. C<< view $logical_name, %args >> asks
+C<< $resolver->build_view($logical_name, \%args, $context) >> to construct one.
+The final coderef, if any, is a wrapper body. In that callback lexical C<$self>
+remains the caller; the callback argument is the wrapper object, and the
+wrapper template itself receives the wrapper as C<$self>.
+
+The core accepts any blessed object and does not construct or introspect Moo
+objects. L<docs/cookbook/typed-views.md> contains complete Moo examples for
+applications that use it.
+
 =head1 HELPER FUNCTIONS
 
 The module provides a set of default helper functions that can be used in templates.
@@ -1382,6 +1466,34 @@ JavaScript sanitizer; use a context-appropriate sanitizer for untrusted code.
 
 Trims leading and trailing whitespace from a string.
 
+=item * C<partial>
+
+C<< partial $identifier, %args >> renders an untyped template immediately with
+the caller's C<$self>. Its output is safe rendered output and is not escaped a
+second time by C<auto_escape>.
+
+=item * C<layout>
+
+C<< layout $identifier, %args >> registers an untyped outer template for the
+current output. Layout arguments are independent named arguments for the
+layout. Multiple layouts nest with the first declaration outermost.
+
+=item * C<yield>
+
+C<yield> returns the current body. C<< yield $name >> returns named content
+captured in the current render frame.
+
+=item * C<content_for>, C<content_replace>, and C<has_content>
+
+C<< content_for $name, sub { ... } >> appends named content in render order.
+C<content_replace> replaces it, and C<< has_content $name >> reports whether
+the named content is nonempty.
+
+=item * C<view>
+
+Renders a typed child as described in L</render_view>. The optional final
+coderef supplies the wrapper body.
+
 =back
 
 =head1 ERROR HANDLING
@@ -1396,6 +1508,13 @@ Can't locate object method "input" at /path/to/templates/hello.yat line 4.
   3:     <%= label('first_name') %>
   4:     <%= input('first_name') %>
   5:     <%= errors('last_name') %>
+
+Each top-level C<render>, compiled-template C<render>, and C<render_view> call
+creates exactly one render frame. Nested partials, layouts, and views share that
+frame. Render cycles are rejected with their active chain. A nested exception is
+decorated with one source-aware C<Render stack>; failed rendering restores the
+frame's body, named content, layouts, and stack state so the engine can be
+reused for a later top-level render.
 
 =head1 ENVIRONMENT VARIABLES
 
