@@ -17,7 +17,8 @@ sub render {
 
 sub _render_with_context {
   my ($self, $context, $entry, @args) = @_;
-  $context->frame->push_render(
+  my $frame = $context->frame;
+  $frame->push_render(
     %$entry,
     view => $context->view,
   );
@@ -27,10 +28,20 @@ sub _render_with_context {
   {
     no warnings 'once';
     local $Template::EmbeddedPerl::ACTIVE_RENDERER = $context;
-    $ok = eval { $output = $self->{code}->($context, @args); 1 };
+    $ok = eval {
+      $output = $self->{code}->($context, @args);
+      my $layouts = $frame->take_layouts;
+      for my $layout (reverse @$layouts) {
+        my ($identifier, $layout_args) = @$layout;
+        $output = $frame->with_body($output, sub {
+          return $context->render_file('layout', $identifier, @$layout_args);
+        });
+      }
+      1;
+    };
     $error = $@ unless $ok;
   }
-  $context->frame->pop_render;
+  $frame->pop_render;
   $ok or do {
     die generate_error_message($error, $self->{template}, $self->{source});
   };

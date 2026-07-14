@@ -236,6 +236,17 @@ sub default_helpers {
       my $output = $context->render_file('partial', $identifier, @args);
       return $engine->raw($output);
     },
+    layout            => sub {
+      my ($engine, $identifier, @args) = @_;
+      my $context = Template::EmbeddedPerl->_current_render_context('layout');
+      $context->frame->register_layout($identifier, @args);
+      return;
+    },
+    yield             => sub {
+      my ($engine) = @_;
+      my $frame = Template::EmbeddedPerl->_current_render_context('yield')->frame;
+      return $engine->raw($frame->default_body);
+    },
     to_safe_string    => sub {
       my ($self, @args) = @_;
       return map {

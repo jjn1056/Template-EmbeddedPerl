@@ -16,4 +16,27 @@ sub push_render {
 
 sub pop_render { pop @{$_[0]->{render_stack}} }
 
+sub register_layout {
+    my ($self, $identifier, @args) = @_;
+    push @{$self->current_scope->{layouts}}, [$identifier, \@args];
+    return;
+}
+
+sub take_layouts {
+    my ($self) = @_;
+    my @layouts = splice @{$self->current_scope->{layouts}};
+    return \@layouts;
+}
+
+sub with_body {
+    my ($self, $body, $callback) = @_;
+    local $self->{default_body} = $body;
+    return $callback->();
+}
+
+sub default_body {
+    my ($self) = @_;
+    return defined($self->{default_body}) ? $self->{default_body} : '';
+}
+
 1;
