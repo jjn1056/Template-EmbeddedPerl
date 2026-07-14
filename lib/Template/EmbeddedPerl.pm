@@ -361,6 +361,9 @@ sub from_string {
     Template::EmbeddedPerl::Arguments->rewrite(
       $template,
       comment_mark => $self->{comment_mark},
+      line_start => $self->{line_start},
+      open_tag => $self->{open_tag},
+      close_tag => $self->{close_tag},
     );
   };
   if ($@) {
@@ -831,12 +834,10 @@ and customizable template compilation namespaces.
 Its quite similar to L<Mojo::Template> and other embedded Perl template engines
 but its got one trick the others can't do (see L<EXCUSE> below).
 
-B<NOTE>: This is a very basic template engine, which doesn't have lots of things
-you probably need like template includes / partials and so forth.  That's by
-design since I plan to wrap this in a L<Catalyst> view which will provide
-all those features.  If you want to use this stand alone you might need to add
-those features yourself (or ideally put something on CPAN that wraps this to 
-provide those features).  Or you can pay me to do it for you ;)
+The core supports standalone composition with partials, layouts, named content
+blocks, and optional typed view objects. Framework integrations can provide a
+view resolver when logical child names need application-specific construction
+or dependency injection.
 
 =head1 ACKNOWLEDGEMENTS
 

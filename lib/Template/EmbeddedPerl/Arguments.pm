@@ -10,10 +10,15 @@ my %RESERVED_ARGUMENT = map { $_ => 1 } qw(__named_args __context _O self);
 sub rewrite {
     my ($class, $template, %args) = @_;
     my $comment_mark = exists $args{comment_mark} ? $args{comment_mark} : '#';
+    my $line_start = exists $args{line_start} ? $args{line_start} : '%';
+    my $open_tag = exists $args{open_tag} ? $args{open_tag} : '<%';
+    my $close_tag = exists $args{close_tag} ? $args{close_tag} : '%>';
     my @lines = $template =~ /.*?(?:\n|\z)/g;
     pop @lines if @lines && $lines[-1] eq '';
 
-    my @directive_lines = grep { $lines[$_] =~ /^[ \t]*%[ \t]+args(?:[ \t]|\n|\z)/ } 0 .. $#lines;
+    my @directive_lines = grep {
+        $lines[$_] =~ /^[ \t]*\Q$line_start\E[ \t]+args(?:[ \t]|\n|\z)/
+    } 0 .. $#lines;
     return ($template, 0) unless @directive_lines;
 
     my $start = $directive_lines[0];
@@ -24,9 +29,10 @@ sub rewrite {
         _error('args must be the first executable directive', $start + 1);
     }
 
-    my ($declaration, $end) = _collect_declaration(\@lines, $start);
+    my ($declaration, $end) = _collect_declaration(\@lines, $start, $line_start);
     for my $line_number ($end + 1 .. $#lines) {
-        next unless $lines[$line_number] =~ /^[ \t]*%[ \t]+args(?:[ \t]|\n|\z)/;
+        next unless $lines[$line_number]
+            =~ /^[ \t]*\Q$line_start\E[ \t]+args(?:[ \t]|\n|\z)/;
         _error('args directive may only appear once', $line_number + 1);
     }
 
@@ -39,19 +45,21 @@ sub rewrite {
         if $actual_newlines > $generated_newlines;
     $generated .= "\n" x ($generated_newlines - $actual_newlines);
 
-    splice @lines, $start, $end - $start + 1, "<%${generated}-%>${line_boundary}";
+    splice @lines, $start, $end - $start + 1,
+        "${open_tag}${generated}-${close_tag}${line_boundary}";
     return (join('', @lines), 1);
 }
 
 sub _collect_declaration {
-    my ($lines, $start) = @_;
+    my ($lines, $start, $line_start) = @_;
     my $declaration = $lines->[$start];
-    $declaration =~ s/^[ \t]*%[ \t]+args\b//;
+    $declaration =~ s/^[ \t]*\Q$line_start\E[ \t]+args\b//;
 
     my $end = $start;
     while (!_is_complete($declaration)) {
         $end++;
-        if ($end > $#$lines || $lines->[$end] !~ /^[ \t]*%(?!%)/) {
+        if ($end > $#$lines
+            || $lines->[$end] !~ /^[ \t]*\Q$line_start\E(?!\Q$line_start\E)/) {
             my $message = $declaration =~ /=\s*(?:\n)?\z/
                 ? 'args default expression is incomplete'
                 : 'incomplete args directive';
@@ -59,7 +67,7 @@ sub _collect_declaration {
         }
 
         my $continuation = $lines->[$end];
-        $continuation =~ s/^[ \t]*%//;
+        $continuation =~ s/^[ \t]*\Q$line_start\E//;
         $declaration .= $continuation;
     }
 

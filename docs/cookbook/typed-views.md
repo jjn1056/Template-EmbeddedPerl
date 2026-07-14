@@ -26,9 +26,10 @@ With that configuration, `/srv/app/templates/pages/contacts.epl` overrides
 `/srv/shared/templates/pages/contacts.epl`.
 
 Template arguments are declared once, before executable template code. An
-argument without a default is required, a scalar expression provides an eager
-default, and a coderef is a lazy default. The lazy coderef runs only when its
-argument is absent; an explicit `undef` is a supplied value.
+argument without a default is required, and a scalar expression is evaluated as
+the default when its argument is absent. A coderef is a lazy default factory;
+it runs only when its argument is absent. An explicit `undef` is a supplied
+value.
 
 `pages/contacts.epl`:
 

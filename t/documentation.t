@@ -1,4 +1,3 @@
-use v5.40;
 use strict;
 use warnings;
 
@@ -12,7 +11,8 @@ use Template::EmbeddedPerl;
 my $cookbook = File::Spec->catfile(qw(docs cookbook typed-views.md));
 ok(-e $cookbook, 'the typed-view cookbook is present');
 
-sub write_template ($directory, $identifier, $content) {
+sub write_template {
+    my ($directory, $identifier, $content) = @_;
     my @parts = split m{/}, $identifier;
     my $file = pop @parts;
     my $path = File::Spec->catfile($directory, @parts, "$file.epl");
@@ -66,7 +66,8 @@ sub write_template ($directory, $identifier, $content) {
 
     has calls => (is => 'ro', default => sub { [] });
 
-    sub build_view ($self, $logical_name, $args, $context) {
+    sub build_view {
+        my ($self, $logical_name, $args, $context) = @_;
         my $class = "Documentation::View::$logical_name";
         unless ($class->can('new')) {
             eval "require $class; 1" or die $@;
@@ -84,7 +85,8 @@ sub write_template ($directory, $identifier, $content) {
         return $view;
     }
 
-    sub template_for ($self, $view, $context) {
+    sub template_for {
+        my ($self, $view, $context) = @_;
         die 'template_for must not be consulted for an explicit Navbar template'
             if $view->isa('Documentation::View::HTML::Navbar');
         return 'components/contact_item'
@@ -127,7 +129,7 @@ EPL
 write_template($second, 'pages/index', '<p>second directory</p>');
 
 write_template($first, 'html_page/contact_list', <<'EPL');
-<section class="contacts" data-source="convention"><%= view 'HTML::Navbar', active => 'contacts' %><%= view $self->prebuilt_item %><%= view 'HTML::ContactItem', label => '<Logical>' %><%= view 'HTMLPage::Shell', title => "Shell " . $self->title, sub ($wrapper) { %><p>body-self=<%= $self->title %>; callback=<%= $wrapper->title %></p><% } %></section>
+<section class="contacts" data-source="convention"><%= view 'HTML::Navbar', active => 'contacts' %><%= view $self->prebuilt_item %><%= view 'HTML::ContactItem', label => '<Logical>' %><%= view 'HTMLPage::Shell', title => "Shell " . $self->title, sub { %><p>body-self=<%= $self->title %>; callback=<%= $_[0]->title %></p><% } %></section>
 EPL
 
 write_template($first, 'html_page/shell', <<'EPL');
@@ -148,7 +150,7 @@ my $untyped_engine = Template::EmbeddedPerl->new(
     auto_escape => 1,
     smart_lines => 1,
     helpers => {
-        record_default => sub ($engine, $name) { $lazy_default_calls++ },
+        record_default => sub { $lazy_default_calls++ },
     },
 );
 
@@ -171,7 +173,6 @@ my $typed_engine = Template::EmbeddedPerl->new(
     directories => [$first, $second],
     auto_escape => 1,
     smart_lines => 1,
-    preamble => 'use v5.40;',
     view_namespace => 'Documentation::View',
     view_resolver => $resolver,
 );

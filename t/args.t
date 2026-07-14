@@ -244,4 +244,24 @@ throws_ok {
     $bad_default->render;
 } qr/at views\/bad-default\.epl line 2/;
 
+my $custom_syntax = Template::EmbeddedPerl->new(
+    open_tag => '[[',
+    close_tag => ']]',
+    expr_marker => '?',
+    line_start => '++',
+    smart_lines => 1,
+);
+is(
+    $custom_syntax->from_string(
+        "++ args \$name = 'world'\n[[? uc \$name ]]",
+    )->render,
+    'WORLD',
+    'args uses configured line and block markers',
+);
+is(
+    $custom_syntax->from_string("% args \$name\n")->render,
+    "% args \$name\n",
+    'the default args marker remains literal when line_start is customized',
+);
+
 done_testing;

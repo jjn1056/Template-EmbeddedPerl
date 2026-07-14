@@ -19,8 +19,13 @@ sub push_render {
     my $stack = $self->{render_stack};
     for my $index (0 .. $#$stack) {
         my $active = $stack->[$index];
-        next unless $active->{kind} eq $entry{kind};
-        next unless $active->{identifier} eq $entry{identifier};
+        if (defined $entry{cycle_key}) {
+            next unless defined($active->{cycle_key})
+                && $active->{cycle_key} eq $entry{cycle_key};
+        } else {
+            next unless $active->{kind} eq $entry{kind};
+            next unless $active->{identifier} eq $entry{identifier};
+        }
 
         my @cycle = (@$stack[$index .. $#$stack], \%entry);
         die 'Render cycle detected: '

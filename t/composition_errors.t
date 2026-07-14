@@ -1,4 +1,3 @@
-use v5.40;
 use Test::Most;
 use File::Path 'make_path';
 use File::Spec;
@@ -10,6 +9,18 @@ use Template::EmbeddedPerl;
     package Local::CompositionErrors::View::HTML::Self;
 
     sub new { bless {}, $_[0] }
+}
+
+{
+    package Local::CompositionErrors::View::HTML::Node;
+
+    sub new {
+        my ($class, $name, $child) = @_;
+        return bless {name => $name, child => $child}, $class;
+    }
+
+    sub name { $_[0]->{name} }
+    sub child { $_[0]->{child} }
 }
 
 {
@@ -110,7 +121,8 @@ use Template::EmbeddedPerl;
     }
 }
 
-sub write_fixture ($root, $identifier, $content) {
+sub write_fixture {
+    my ($root, $identifier, $content) = @_;
     my @parts = split m{/}, "$identifier.epl";
     my $file = File::Spec->catfile($root, @parts);
     my (undef, $directory) = File::Spec->splitpath($file);
@@ -121,7 +133,8 @@ sub write_fixture ($root, $identifier, $content) {
     return $file;
 }
 
-sub capture_failure ($callback) {
+sub capture_failure {
+    my ($callback) = @_;
     my $error;
     local $SIG{ALRM} = sub { die "render timed out\n" };
     local $SIG{__WARN__} = sub {
@@ -134,17 +147,20 @@ sub capture_failure ($callback) {
     return $error;
 }
 
-sub stack_section ($error) {
+sub stack_section {
+    my ($error) = @_;
     my ($stack) = $error =~ /^(Render stack:\n.*)\z/ms;
     return $stack;
 }
 
-sub assert_single_stack ($error, $expected, $description) {
+sub assert_single_stack {
+    my ($error, $expected, $description) = @_;
     is(scalar(() = $error =~ /^Render stack:$/mg), 1, "$description has one render stack");
     is(stack_section($error), $expected, "$description has the ordered render stack");
 }
 
-sub assert_frame_clean ($frame, $description) {
+sub assert_frame_clean {
+    my ($frame, $description) = @_;
     is_deeply($frame->render_stack, [], "$description clears the render stack");
     is($frame->default_body, '', "$description clears the default body");
     is($frame->content('css'), '', "$description clears named CSS content");
@@ -166,6 +182,11 @@ my $view_self_source = write_fixture(
     $directory,
     'html/self',
     "%= view \$self\n",
+);
+write_fixture(
+    $directory,
+    'html/node',
+    q{<%= $self->name %><%= $self->child ? view($self->child) : '' %>},
 );
 my $runtime_partial_source = write_fixture(
     $directory,
@@ -206,7 +227,6 @@ my $engine = Template::EmbeddedPerl->new(
     directories => [$directory],
     view_namespace => 'Local::CompositionErrors::View',
     smart_lines => 1,
-    preamble => 'use v5.40;',
     helpers => {
         state_probe => sub {
             my $context = Template::EmbeddedPerl->_current_render_context('state_probe');
@@ -235,7 +255,8 @@ my $known_good = $engine->from_string(
     identifier => 'known-good',
 );
 
-sub assert_engine_reusable ($failed_frame, $description) {
+sub assert_engine_reusable {
+    my ($failed_frame, $description) = @_;
     is($known_good->render, '1|||', "$description leaves the engine reusable");
     isnt(
         refaddr($last_probe_context->frame),
@@ -324,18 +345,26 @@ my $view_error = capture_failure(sub {
 });
 like(
     $view_error,
-    qr/Render cycle detected: view Local::CompositionErrors::View::HTML::Self -> view Local::CompositionErrors::View::HTML::Self/,
-    'a repeated active typed view is rejected before uncontrolled recursion',
+    qr/Render cycle detected: root Local::CompositionErrors::View::HTML::Self -> view Local::CompositionErrors::View::HTML::Self/,
+    'a repeated root view object is rejected at its first nested render',
 );
 assert_single_stack(
     $view_error,
     "Render stack:\n"
-        . "  root Local::CompositionErrors::View::HTML::Self ($view_self_source)\n"
-        . "  view Local::CompositionErrors::View::HTML::Self ($view_self_source)\n",
+        . "  root Local::CompositionErrors::View::HTML::Self ($view_self_source)\n",
     'typed view cycle',
 );
 assert_frame_clean($view_context->frame, 'typed view cycle failure');
 assert_engine_reusable($view_context->frame, 'typed view cycle failure');
+
+my $grandchild = Local::CompositionErrors::View::HTML::Node->new('grandchild');
+my $child = Local::CompositionErrors::View::HTML::Node->new('child', $grandchild);
+my $parent = Local::CompositionErrors::View::HTML::Node->new('parent', $child);
+is(
+    $engine->render_view($parent),
+    'parentchildgrandchild',
+    'distinct objects of one view class do not form a render cycle',
+);
 
 my $runtime_root_source = File::Spec->catfile($directory, qw(roots runtime.epl));
 my $runtime_root = $engine->from_string(
@@ -408,7 +437,7 @@ assert_engine_reusable($layout_runtime_context->frame, 'deferred layout runtime 
 my $callback_root_source = File::Spec->catfile($directory, qw(roots callback.epl));
 my $callback_root = $engine->from_string(<<'EPL',
 % content_for css => sub { raw 'callback css' }
-%= view $_[0], sub ($wrapper) {
+%= view $_[0], sub {
 % content_for js => sub { raw 'callback js' }
 % die "wrapper callback failed"
 % }
@@ -443,7 +472,7 @@ my $caught_callback_failure = $engine->from_string(<<'EPL',
 % layout 'layouts/caller'
 % my $caught;
 % eval {
-%   view $_[0], sub ($wrapper) {
+%   view $_[0], sub {
 %     content_for css => sub { raw 'callback css' }
 %     content_for js => sub { raw 'callback js' }
 %     layout 'layouts/callback'
@@ -492,7 +521,7 @@ my $caught_child_failure = $engine->from_string(<<'EPL',
 % layout 'layouts/caller'
 % my $caught;
 % eval {
-%   view $_[0], sub ($wrapper) {
+%   view $_[0], sub {
 %     content_for css => sub { raw 'callback css' }
 %     content_for js => sub { raw 'callback js' }
 %     layout 'layouts/callback'

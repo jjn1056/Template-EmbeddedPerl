@@ -89,6 +89,13 @@ use Template::EmbeddedPerl;
     sub template_for { return }
 }
 
+{
+    package Local::View::InvalidResolver;
+
+    sub new { bless {}, $_[0] }
+    sub build_view { return {} }
+}
+
 my $template_directory = File::Spec->catdir(qw(t templates views));
 my $resolver = Local::View::Resolver->new;
 my $engine = Template::EmbeddedPerl->new(
@@ -96,7 +103,6 @@ my $engine = Template::EmbeddedPerl->new(
     view_namespace => 'Local::View',
     view_resolver => $resolver,
     auto_escape => 1,
-    preamble => 'use v5.40;',
 );
 
 throws_ok {
@@ -187,8 +193,8 @@ my $preconstructed_page = Local::View::HTML::Page->new(
     parent => $root,
 );
 my $object_wrapper = $engine->from_string(<<'EPL', source => 'object-wrapper.epl');
-%= view $_[0], sub ($wrapper) {
-  <strong><%= $wrapper->title %>|<%= $self->title %></strong>
+%= view $_[0], sub {
+  <strong><%= $_[0]->title %>|<%= $self->title %></strong>
 % }
 EPL
 my $page_build_count = grep { $_->{name} eq 'HTML::Page' } @{$resolver->build_calls};
@@ -229,6 +235,68 @@ throws_ok {
 } qr/Odd constructor argument list for logical view 'HTML::Page'/,
     'a logical view rejects an odd constructor list';
 is(@{$resolver->build_calls}, $build_count, 'odd logical arguments fail before build_view');
+
+my $constructor_failure = $engine->from_string(
+    q{<%= view 'HTML::Page' %>},
+    source => 'constructor-failure.epl',
+);
+my $constructor_error;
+eval {
+    $constructor_failure->_render_with_context(
+        $engine->_new_render_context(view => $root, root_view => $root),
+        {
+            kind => 'root',
+            identifier => 'constructor-failure',
+            source => 'constructor-failure.epl',
+        },
+    );
+    1;
+} or $constructor_error = $@;
+like(
+    $constructor_error,
+    qr/Missing required arguments?: title/,
+    'a nested Moo constructor failure preserves its original error',
+);
+like(
+    $constructor_error,
+    qr{Render stack:\n  root constructor-failure \(constructor-failure\.epl\)\n  view HTML::Page \(unknown\)\n\z},
+    'a nested Moo constructor failure identifies the attempted logical view',
+);
+
+my $invalid_resolver_engine = Template::EmbeddedPerl->new(
+    directories => [$template_directory],
+    view_namespace => 'Local::View',
+    view_resolver => Local::View::InvalidResolver->new,
+);
+my $invalid_resolver_template = $invalid_resolver_engine->from_string(
+    q{<%= view 'HTML::Page' %>},
+    source => 'invalid-resolver.epl',
+);
+my $invalid_resolver_error;
+eval {
+    $invalid_resolver_template->_render_with_context(
+        $invalid_resolver_engine->_new_render_context(
+            view => $root,
+            root_view => $root,
+        ),
+        {
+            kind => 'root',
+            identifier => 'invalid-resolver',
+            source => 'invalid-resolver.epl',
+        },
+    );
+    1;
+} or $invalid_resolver_error = $@;
+like(
+    $invalid_resolver_error,
+    qr/Resolver did not return a blessed view for 'HTML::Page'/,
+    'an invalid resolver result preserves its contract error',
+);
+like(
+    $invalid_resolver_error,
+    qr{Render stack:\n  root invalid-resolver \(invalid-resolver\.epl\)\n  view HTML::Page \(unknown\)\n\z},
+    'an invalid resolver result identifies the attempted logical view',
+);
 
 my $invalid_child_target = $engine->from_string(
     q{<%= view $_[0] %>},
@@ -276,9 +344,9 @@ throws_ok {
     'a logical child requires resolver construction support';
 
 my $nested_wrappers = $engine->from_string(<<'EPL', source => 'nested-wrappers.epl');
-%= view 'HTML::Page', title => 'One', sub ($one) {
-%= view 'HTML::Page', title => 'Two', sub ($two) {
-%= view 'HTML::Page', title => 'Three', sub ($three) {
+%= view 'HTML::Page', title => 'One', sub {
+%= view 'HTML::Page', title => 'Two', sub {
+%= view 'HTML::Page', title => 'Three', sub {
 %= view 'HTML::Contacts::Item', contact => $self->contacts->[1]
 % }
 % }
@@ -301,7 +369,7 @@ is(
 
 my $missing_wrapper = Local::View::MissingWrapper->new(root => $root, parent => $root);
 my $failing_wrapper = $engine->from_string(<<'EPL', source => 'failing-wrapper.epl');
-%= view $_[0], sub ($wrapper) {
+%= view $_[0], sub {
 body that must be restored
 % }
 EPL
