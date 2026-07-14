@@ -480,6 +480,64 @@ sub _class_to_template {
   return join '/', map { $self->_snake_case_segment($_) } split /::/, $suffix;
 }
 
+sub _logical_view_class {
+  my ($self, $logical_name) = @_;
+
+  die "Invalid logical view name '$logical_name'\n"
+    unless defined($logical_name)
+      && !ref($logical_name)
+      && $logical_name =~ /\A[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*\z/;
+
+  my $namespace = $self->{view_namespace};
+  die "Logical view '$logical_name' requires view_namespace\n"
+    unless defined($namespace) && length($namespace);
+  die "Invalid view_namespace '$namespace'\n"
+    unless $namespace =~ /\A[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*\z/;
+
+  return "$namespace\::$logical_name";
+}
+
+sub _construct_view {
+  my ($self, $logical_name, $args, $context) = @_;
+  my $class = $self->_logical_view_class($logical_name);
+
+  unless ($class->can('new')) {
+    my $class_file = "$class.pm";
+    $class_file =~ s{::}{/}g;
+    my $loaded = eval { require $class_file; 1 };
+    die "Failed to load logical view '$logical_name' as '$class': $@"
+      unless $loaded;
+  }
+
+  my $factory = $self->{view_factory};
+  die "view_factory must be a code reference\n"
+    if defined($factory) && ref($factory) ne 'CODE';
+
+  my $view;
+  if ($factory) {
+    my $constructed = eval {
+      $view = $factory->($class, {%$args}, $context);
+      1;
+    };
+    die "view_factory failed for logical view '$logical_name' as '$class': $@"
+      unless $constructed;
+  } else {
+    my $constructed = eval {
+      $view = $class->new(%$args);
+      1;
+    };
+    die "Failed to construct logical view '$logical_name' as '$class': $@"
+      unless $constructed;
+  }
+
+  die "view_factory did not return a blessed view for '$logical_name'\n"
+    if $factory && !Scalar::Util::blessed($view);
+  die "Constructor did not return a blessed view for '$logical_name'\n"
+    unless Scalar::Util::blessed($view);
+
+  return $view;
+}
+
 sub _template_for_view {
   my ($self, $view, $context) = @_;
   my $class = Scalar::Util::blessed($view) || ref($view) || "$view";

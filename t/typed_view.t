@@ -3,6 +3,31 @@ use File::Spec;
 use Template::EmbeddedPerl;
 
 {
+    package Local::EasyView::HTML::Greeting;
+    use Moo;
+
+    has name => (is => 'ro', required => 1);
+    has punctuation => (
+        is => 'ro',
+        default => sub { '!' },
+        coerce => sub { $_[0] eq 'question' ? '?' : $_[0] },
+        isa => sub {
+            die "punctuation must be one character\n"
+                unless defined($_[0]) && !ref($_[0]) && length($_[0]) == 1;
+        },
+    );
+}
+
+{
+    package Local::EasyView::GreetingAdapter;
+    use Moo;
+
+    has name => (is => 'ro', required => 1);
+    sub punctuation { '~' }
+    sub template { 'html/greeting' }
+}
+
+{
     package Local::View::HTML::Contacts::Index;
     use Moo;
 
@@ -63,40 +88,6 @@ use Template::EmbeddedPerl;
 }
 
 {
-    package Local::View::Resolver;
-    use Moo;
-
-    has build_calls => (is => 'ro', default => sub { [] });
-
-    sub build_view {
-        my ($self, $name, $args, $context) = @_;
-        my $call = {
-            name => $name,
-            args => {%$args},
-            context => $context,
-        };
-        push @{$self->build_calls}, $call;
-        my $class = "Local::View::$name";
-        my $view = $class->new(
-            %$args,
-            root => $context->root_view,
-            parent => $context->view,
-        );
-        $call->{view} = $view;
-        return $view;
-    }
-
-    sub template_for { return }
-}
-
-{
-    package Local::View::InvalidResolver;
-
-    sub new { bless {}, $_[0] }
-    sub build_view { return {} }
-}
-
-{
     package Local::View::Collision;
 
     sub new { bless {}, $_[0] }
@@ -110,25 +101,66 @@ use Template::EmbeddedPerl;
     sub template { 'components/collision_leaf' }
 }
 
+my $template_directory = File::Spec->catdir(qw(t templates views));
+my $easy_engine = Template::EmbeddedPerl->new(
+    directories => [$template_directory],
+    view_namespace => 'Local::EasyView',
+);
+
+is(
+    $easy_engine->from_string(
+        q{<%= view 'HTML::Greeting', name => 'Ada' %>},
+        source => 'default-construction.epl',
+    )->render,
+    "<p>Ada!</p>\n",
+    'a logical Moo view is constructed with new and its attribute default applies',
+);
+
+is(
+    $easy_engine->from_string(
+        q{<%= view 'HTML::Greeting', name => 'Ada', punctuation => 'question' %>},
+        source => 'explicit-construction.epl',
+    )->render,
+    "<p>Ada?</p>\n",
+    'explicit template arguments are passed through Moo coercion',
+);
+
+my $loaded_engine = Template::EmbeddedPerl->new(
+    directories => [$template_directory],
+    view_namespace => 'Loaded::View',
+);
 {
-    package Local::View::CollisionResolver;
-
-    sub new { bless {}, $_[0] }
-
-    sub build_view {
-        my ($self, $target) = @_;
-        die "Unexpected logical target '$target'\n"
-            unless $target eq 'Local::View::Collision';
-        return Local::View::CollisionLeaf->new;
-    }
+    local @INC = (File::Spec->catdir(qw(t lib)), @INC);
+    is(
+        $loaded_engine->from_string(
+            q{<%= view 'HTML::Notice', message => 'Loaded' %>},
+            source => 'class-loading.epl',
+        )->render,
+        "<aside>Loaded</aside>\n",
+        'a logical view class is required from its package path before construction',
+    );
 }
 
-my $template_directory = File::Spec->catdir(qw(t templates views));
-my $resolver = Local::View::Resolver->new;
+my @factory_calls;
 my $engine = Template::EmbeddedPerl->new(
     directories => [$template_directory],
     view_namespace => 'Local::View',
-    view_resolver => $resolver,
+    view_factory => sub {
+        my ($class, $args, $context) = @_;
+        my $call = {
+            class => $class,
+            args => {%$args},
+            context => $context,
+        };
+        push @factory_calls, $call;
+        my $view = $class->new(
+            %$args,
+            root => $context->root_view,
+            parent => $context->view,
+        );
+        $call->{view} = $view;
+        return $view;
+    },
     auto_escape => 1,
 );
 
@@ -172,13 +204,18 @@ is(
     'typed root render scope is cleaned up after rendering',
 );
 
-my ($page_call) = grep { $_->{name} eq 'HTML::Page' } @{$resolver->build_calls};
-my ($item_call) = grep { $_->{name} eq 'HTML::Contacts::Item' } @{$resolver->build_calls};
-my ($navbar_call) = grep { $_->{name} eq 'HTML::Navbar' } @{$resolver->build_calls};
+my ($page_call) = grep { $_->{class} eq 'Local::View::HTML::Page' } @factory_calls;
+my ($item_call) = grep { $_->{class} eq 'Local::View::HTML::Contacts::Item' } @factory_calls;
+my ($navbar_call) = grep { $_->{class} eq 'Local::View::HTML::Navbar' } @factory_calls;
 
 isa_ok($page_call->{view}, 'Local::View::HTML::Page', 'wrapper callback receives the constructed page');
-is($page_call->{context}->view, $root, 'page resolver context exposes the caller view');
-is($page_call->{context}->root_view, $root, 'page resolver context preserves the top-level root');
+is_deeply(
+    $page_call->{args},
+    {title => 'Contacts'},
+    'view_factory receives only explicit constructor arguments',
+);
+is($page_call->{context}->view, $root, 'factory context exposes the caller view');
+is($page_call->{context}->root_view, $root, 'factory context preserves the typed root');
 is($page_call->{view}->root, $root, 'page receives the top-level root');
 is($page_call->{view}->parent, $root, 'page receives the caller as parent');
 is($item_call->{context}->view, $root, 'leaf rendered in wrapper body keeps the caller context');
@@ -202,7 +239,7 @@ my $object_context = $engine->_new_render_context(
     root_view => $root,
     source => 'object-leaf.epl',
 );
-my $build_count = @{$resolver->build_calls};
+my $build_count = scalar @factory_calls;
 is(
     $object_leaf->_render_with_context(
         $object_context,
@@ -212,7 +249,7 @@ is(
     "<article>Prebuilt; root=Contacts; parent=Contacts</article>\n",
     'a preconstructed leaf view renders through the object path',
 );
-is(@{$resolver->build_calls}, $build_count, 'a preconstructed view bypasses build_view');
+is(scalar @factory_calls, $build_count, 'a preconstructed view bypasses view_factory');
 
 my $preconstructed_page = Local::View::HTML::Page->new(
     title => 'Object Page',
@@ -224,7 +261,7 @@ my $object_wrapper = $engine->from_string(<<'EPL', source => 'object-wrapper.epl
   <strong><%= $_[0]->title %>|<%= $self->title %></strong>
 % }
 EPL
-my $page_build_count = grep { $_->{name} eq 'HTML::Page' } @{$resolver->build_calls};
+my $page_build_count = grep { $_->{class} eq 'Local::View::HTML::Page' } @factory_calls;
 like(
     $object_wrapper->_render_with_context(
         $engine->_new_render_context(view => $root, root_view => $root),
@@ -235,9 +272,9 @@ like(
     'an object wrapper callback receives the child while lexical self remains the caller',
 );
 is(
-    scalar(grep { $_->{name} eq 'HTML::Page' } @{$resolver->build_calls}),
+    scalar(grep { $_->{class} eq 'Local::View::HTML::Page' } @factory_calls),
     $page_build_count,
-    'a preconstructed wrapper bypasses build_view',
+    'a preconstructed wrapper bypasses view_factory',
 );
 
 my $object_with_args = $engine->from_string(
@@ -253,7 +290,7 @@ my $logical_with_odd_args = $engine->from_string(
     q{<%= view 'HTML::Page', title => 'Odd', 'dangling' %>},
     source => 'logical-with-odd-args.epl',
 );
-$build_count = @{$resolver->build_calls};
+$build_count = scalar @factory_calls;
 throws_ok {
     $logical_with_odd_args->_render_with_context(
         $engine->_new_render_context(view => $root, root_view => $root),
@@ -261,7 +298,7 @@ throws_ok {
     );
 } qr/Odd constructor argument list for logical view 'HTML::Page'/,
     'a logical view rejects an odd constructor list';
-is(@{$resolver->build_calls}, $build_count, 'odd logical arguments fail before build_view');
+is(scalar @factory_calls, $build_count, 'odd logical arguments fail before view_factory');
 
 my $constructor_failure = $engine->from_string(
     q{<%= view 'HTML::Page' %>},
@@ -290,44 +327,9 @@ like(
     'a nested Moo constructor failure identifies the attempted logical view',
 );
 
-my $invalid_resolver_engine = Template::EmbeddedPerl->new(
-    directories => [$template_directory],
-    view_namespace => 'Local::View',
-    view_resolver => Local::View::InvalidResolver->new,
-);
-my $invalid_resolver_template = $invalid_resolver_engine->from_string(
-    q{<%= view 'HTML::Page' %>},
-    source => 'invalid-resolver.epl',
-);
-my $invalid_resolver_error;
-eval {
-    $invalid_resolver_template->_render_with_context(
-        $invalid_resolver_engine->_new_render_context(
-            view => $root,
-            root_view => $root,
-        ),
-        {
-            kind => 'root',
-            identifier => 'invalid-resolver',
-            source => 'invalid-resolver.epl',
-        },
-    );
-    1;
-} or $invalid_resolver_error = $@;
-like(
-    $invalid_resolver_error,
-    qr/Resolver did not return a blessed view for 'HTML::Page'/,
-    'an invalid resolver result preserves its contract error',
-);
-like(
-    $invalid_resolver_error,
-    qr{Render stack:\n  root invalid-resolver \(invalid-resolver\.epl\)\n  view HTML::Page \(unknown\)\n\z},
-    'an invalid resolver result identifies the attempted logical view',
-);
-
 my $collision_engine = Template::EmbeddedPerl->new(
     directories => [$template_directory],
-    view_resolver => Local::View::CollisionResolver->new,
+    view_namespace => 'Local::View',
 );
 my $collision_root = $collision_engine->from_string(
     q{<%= view $_[0] %>},
@@ -352,7 +354,7 @@ for my $case (
     ['scalar reference', \$scalar_target],
 ) {
     my ($description, $target) = @$case;
-    $build_count = @{$resolver->build_calls};
+    $build_count = scalar @factory_calls;
     throws_ok {
         $invalid_child_target->_render_with_context(
             $engine->_new_render_context(view => $root, root_view => $root),
@@ -362,27 +364,129 @@ for my $case (
     } qr/\ALogical view target must be a blessed object or a non-empty logical name/,
         "$description is rejected with the typed view target contract";
     is(
-        @{$resolver->build_calls},
+        scalar @factory_calls,
         $build_count,
-        "$description fails before build_view",
+        "$description fails before view_factory",
     );
 }
 
-my $without_resolver = Template::EmbeddedPerl->new(
+throws_ok {
+    $easy_engine->from_string(
+        q{<%= view '../Greeting', name => 'Ada' %>},
+        source => 'invalid-logical-name.epl',
+    )->render;
+} qr/Invalid logical view name '\.\.\/Greeting'/,
+    'logical names must be relative Perl package names';
+
+my $no_namespace = Template::EmbeddedPerl->new(
     directories => [$template_directory],
-    view_namespace => 'Local::View',
-);
-my $logical_without_resolver = $without_resolver->from_string(
-    q{<%= view 'HTML::Navbar' %>},
-    source => 'logical-without-resolver.epl',
 );
 throws_ok {
-    $logical_without_resolver->_render_with_context(
-        $without_resolver->_new_render_context(view => $root, root_view => $root),
-        {kind => 'root', identifier => 'logical-without-resolver', source => 'logical-without-resolver.epl'},
-    );
-} qr/Logical view 'HTML::Navbar' requires a resolver with build_view/,
-    'a logical child requires resolver construction support';
+    $no_namespace->from_string(
+        q{<%= view 'HTML::Greeting', name => 'Ada' %>},
+        source => 'missing-view-namespace.epl',
+    )->render;
+} qr/Logical view 'HTML::Greeting' requires view_namespace/,
+    'logical construction requires a configured namespace';
+
+throws_ok {
+    $easy_engine->from_string(
+        q{<%= view 'HTML::Missing' %>},
+        source => 'missing-view-class.epl',
+    )->render;
+} qr/Failed to load logical view 'HTML::Missing' as 'Local::EasyView::HTML::Missing'/,
+    'class-loading errors identify logical and expanded names';
+
+my $moo_constructor_template = $easy_engine->from_string(
+    q{<%= view 'HTML::Greeting' %>},
+    source => 'moo-constructor-error.epl',
+);
+my $moo_constructor_error;
+eval { $moo_constructor_template->render; 1 } or $moo_constructor_error = $@;
+like(
+    $moo_constructor_error,
+    qr/Failed to construct logical view 'HTML::Greeting'.*Missing required arguments?: name/s,
+    'Moo constructor errors retain their original detail',
+);
+like(
+    $moo_constructor_error,
+    qr{Render stack:\n  root moo-constructor-error\.epl \(moo-constructor-error\.epl\)\n  view HTML::Greeting \(unknown\)\n},
+    'a Moo constructor error identifies the attempted logical view',
+);
+
+throws_ok {
+    $easy_engine->from_string(
+        q{<%= view 'HTML::Greeting', name => 'Ada', punctuation => 'long' %>},
+        source => 'moo-type-error.epl',
+    )->render;
+} qr/Failed to construct logical view 'HTML::Greeting'.*punctuation must be one character/s,
+    'Moo isa failures retain their original detail';
+
+my $bad_factory_engine = Template::EmbeddedPerl->new(
+    directories => [$template_directory],
+    view_namespace => 'Local::EasyView',
+    view_factory => sub { return {} },
+);
+my $bad_factory_template = $bad_factory_engine->from_string(
+    q{<%= view 'HTML::Greeting', name => 'Ada' %>},
+    source => 'bad-view-factory.epl',
+);
+my $bad_factory_error;
+eval { $bad_factory_template->render; 1 } or $bad_factory_error = $@;
+like(
+    $bad_factory_error,
+    qr/view_factory did not return a blessed view for 'HTML::Greeting'/,
+    'view_factory must return a blessed object',
+);
+like(
+    $bad_factory_error,
+    qr{Render stack:\n  root bad-view-factory\.epl \(bad-view-factory\.epl\)\n  view HTML::Greeting \(unknown\)\n},
+    'a bad factory result identifies the attempted logical view',
+);
+
+my $throwing_factory_engine = Template::EmbeddedPerl->new(
+    directories => [$template_directory],
+    view_namespace => 'Local::EasyView',
+    view_factory => sub { die "container unavailable\n" },
+);
+throws_ok {
+    $throwing_factory_engine->from_string(
+        q{<%= view 'HTML::Greeting', name => 'Ada' %>},
+        source => 'throwing-view-factory.epl',
+    )->render;
+} qr/view_factory failed for logical view 'HTML::Greeting'.*container unavailable/s,
+    'view_factory errors identify the operation and retain the original exception';
+
+my $invalid_factory_engine = Template::EmbeddedPerl->new(
+    directories => [$template_directory],
+    view_namespace => 'Local::EasyView',
+    view_factory => 'not a callback',
+);
+throws_ok {
+    $invalid_factory_engine->from_string(
+        q{<%= view 'HTML::Greeting', name => 'Ada' %>},
+        source => 'invalid-view-factory.epl',
+    )->render;
+} qr/view_factory must be a code reference/,
+    'view_factory configuration is validated when logical construction uses it';
+
+my $adapter_factory_engine = Template::EmbeddedPerl->new(
+    directories => [$template_directory],
+    view_namespace => 'Local::EasyView',
+    view_factory => sub {
+        my ($class, $args, $context) = @_;
+        is($class, 'Local::EasyView::HTML::Greeting', 'factory receives the requested class');
+        return Local::EasyView::GreetingAdapter->new(%$args);
+    },
+);
+is(
+    $adapter_factory_engine->from_string(
+        q{<%= view 'HTML::Greeting', name => 'Ada' %>},
+        source => 'adapter-view-factory.epl',
+    )->render,
+    "<p>Ada~</p>\n",
+    'view_factory may return a different blessed class with its own template policy',
+);
 
 my $nested_wrappers = $engine->from_string(<<'EPL', source => 'nested-wrappers.epl');
 %= view 'HTML::Page', title => 'One', sub {

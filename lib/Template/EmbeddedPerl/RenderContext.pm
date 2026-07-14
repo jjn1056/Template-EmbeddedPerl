@@ -124,16 +124,12 @@ sub build_child_view {
             croak "Odd constructor argument list for logical view '$target'"
                 if @$args % 2;
 
-            my $resolver = $self->engine->{view_resolver};
-            croak "Logical view '$target' requires a resolver with build_view"
-                unless $resolver && $resolver->can('build_view');
-
             my %constructor_args = @$args;
-            my $view = $resolver->build_view($target, \%constructor_args, $self);
-            croak "Resolver did not return a blessed view for '$target'"
-                unless Scalar::Util::blessed($view);
-
-            return $view;
+            return $self->engine->_construct_view(
+                $target,
+                \%constructor_args,
+                $self,
+            );
         },
     );
 }
