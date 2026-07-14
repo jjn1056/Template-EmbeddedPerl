@@ -1499,8 +1499,8 @@ wrapper object, and the wrapper template itself receives the wrapper as
 C<$self>.
 
 The core accepts any blessed object. Moo is used only by the test and cookbook
-examples. L<docs/cookbook/typed-views.md> contains complete Moo examples for
-applications that use it.
+examples. L<Template::EmbeddedPerl::Cookbook::TypedViews> contains complete Moo
+examples for applications that use it.
 
 =head1 HELPER FUNCTIONS
 

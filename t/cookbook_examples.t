@@ -275,6 +275,21 @@ like(
     qr/B<Experimental:> Typed view support, including C<render_view>, C<view>, C<view_namespace>, and C<view_factory>, may change as real-world integration needs become clearer\./,
     'typed-view POD carries the exact experimental notice',
 );
+
+my $module = read_file(File::Spec->catfile(
+    $root, qw(lib Template EmbeddedPerl.pm),
+));
+unlike(
+    $module,
+    qr{docs/cookbook/typed-views\.md},
+    'main module POD has no stale typed-view Markdown link',
+);
+like(
+    $module,
+    qr/L<Template::EmbeddedPerl::Cookbook::TypedViews>/,
+    'main module POD links to the installed typed-view cookbook',
+);
+
 ok(
     !-e File::Spec->catfile($root, qw(docs cookbook typed-views.md)),
     'old Markdown cookbook is removed after migration',
