@@ -17,6 +17,10 @@ sub render {
 
 sub _render_with_context {
   my ($self, $context, $entry, @args) = @_;
+  $context->frame->push_render(
+    %$entry,
+    view => $context->view,
+  );
   my $output;
   my $ok;
   my $error;
@@ -26,6 +30,7 @@ sub _render_with_context {
     $ok = eval { $output = $self->{code}->($context, @args); 1 };
     $error = $@ unless $ok;
   }
+  $context->frame->pop_render;
   $ok or do {
     die generate_error_message($error, $self->{template}, $self->{source});
   };

@@ -21,6 +21,23 @@ sub with {
     return ref($self)->new(%$self, %overrides);
 }
 
+sub render_file {
+    my ($self, $kind, $identifier, @args) = @_;
+    croak "Invalid $kind identifier"
+        unless defined($identifier) && !ref($identifier);
+
+    my $compiled = $self->engine->from_file($identifier);
+    return $compiled->_render_with_context(
+        $self->with(source => $compiled->{source}),
+        {
+            kind => $kind,
+            identifier => $identifier,
+            source => $compiled->{source},
+        },
+        @args,
+    );
+}
+
 sub named_arguments {
     my ($self, $args) = @_;
     croak 'Odd template argument list' if @$args % 2;

@@ -230,6 +230,12 @@ sub default_helpers {
     escape_javascript => sub { my ($self, @args) = @_; return $self->escape_javascript(@args); },
     trim              => sub { my ($self, $arg) = @_; return $self->trim($arg); },
     mtrim             => sub { my ($self, $arg) = @_; return $self->mtrim($arg); },
+    partial           => sub {
+      my ($engine, $identifier, @args) = @_;
+      my $context = Template::EmbeddedPerl->_current_render_context('partial');
+      my $output = $context->render_file('partial', $identifier, @args);
+      return $engine->raw($output);
+    },
     to_safe_string    => sub {
       my ($self, @args) = @_;
       return map {
