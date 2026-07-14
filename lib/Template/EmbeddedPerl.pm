@@ -575,11 +575,17 @@ sub parse_template {
   if ($self->{smart_lines}) {
     $template =~ s{\r\n}{\n}g;
     $template =~ s{
-        ^[\t ]*\Q${line_start}${expr_marker}\E(.*?)(?:\n|\z)
-    }{${open_tag}${expr_marker}$1${close_tag}}mgx;
+        ^[\t ]*\Q${line_start}${expr_marker}\E(.*?)(\n|\z)
+    }{
+        $open_tag . $expr_marker . $1 . $close_tag
+          . (length($2) ? "\\\n" : '')
+    }mgex;
     $template =~ s{
-        ^[\t ]*(?!\Q${close_tag}\E[\t ]*$)\Q${line_start}\E(.*?)(?:\n|\z)
-    }{${open_tag}$1${close_tag}}mgx;
+        ^[\t ]*(?!\Q${close_tag}\E[\t ]*$)\Q${line_start}\E(.*?)(\n|\z)
+    }{
+        $open_tag . $1 . $close_tag
+          . (length($2) ? "\\\n" : '')
+    }mgex;
   } else {
     # Convert all lines starting with %= to start with <%= and then add %> to the end
     $template =~ s{^\s*\Q${line_start}${expr_marker}\E(.*?)(?=\\?$)}{${open_tag}${expr_marker}$1${close_tag}}mg;

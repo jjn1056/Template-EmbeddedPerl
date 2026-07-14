@@ -284,4 +284,131 @@ is(
     'ordinary plain-text backslash-newline output remains unchanged',
 );
 
+for my $case (
+    {
+        name => 'consecutive smart code lines',
+        kind => 'runtime',
+        template => "% my \$first = 1\n% my \$second = 2\n% die 'smart runtime'\n",
+        line => 3,
+    },
+    {
+        name => 'smart expression compile error',
+        kind => 'compile',
+        template => "% my \$first = 1\n%= \$missing\n",
+        line => 2,
+    },
+    {
+        name => 'consecutive smart warning',
+        kind => 'warning',
+        template => "% my \$first = 1\n% my \$second = 2\n% warn 'smart warning'\n",
+        line => 3,
+    },
+    {
+        name => 'smart line after an ordinary comment',
+        kind => 'runtime',
+        template => "% my \$first = 1\n# hidden\n% die 'smart comment'\n",
+        line => 3,
+    },
+    {
+        name => 'smart line after continued comments',
+        kind => 'runtime',
+        template => "% my \$first = 1\n# one\\\n# two\\\n% die 'smart continued comments'\n",
+        line => 4,
+    },
+) {
+    my $source = "smart-$case->{kind}.epl";
+    reports_location(
+        $diagnostic_runner{$case->{kind}}->(
+            Template::EmbeddedPerl->new(smart_lines => 1),
+            $case->{template},
+            $source,
+        ),
+        $source,
+        $case->{line},
+        $case->{name},
+    );
+}
+
+my $custom_smart = Template::EmbeddedPerl->new(
+    open_tag => '[[',
+    close_tag => ']]',
+    expr_marker => '?',
+    line_start => '++',
+    smart_lines => 1,
+);
+reports_location(
+    warning_message(
+        $custom_smart,
+        "++ my \$first = 1\n++ my \$second = 2\n++ warn 'custom smart warning'\n",
+        'custom-smart.epl',
+    ),
+    'custom-smart.epl',
+    3,
+    'custom smart markers preserve physical lines',
+);
+
+reports_location(
+    runtime_failure(
+        Template::EmbeddedPerl->new(smart_lines => 1),
+        "% my \$first = 1\r\n% my \$second = 2\r\n% die 'smart crlf'\r\n",
+        'smart-crlf.epl',
+    ),
+    'smart-crlf.epl',
+    3,
+    'smart CRLF input reports its normalized physical line',
+);
+
+for my $guard (
+    {
+        name => 'multiline Perl block',
+        engine => Template::EmbeddedPerl->new,
+        template => "head\n<%\nmy \$value = 1;\ndie 'multiline';\n%>\n",
+        source => 'multiline.epl',
+        line => 4,
+    },
+    {
+        name => 'trim-close tag',
+        engine => Template::EmbeddedPerl->new,
+        template => "<% my \$value = 1; -%>\n<% die 'trimmed' %>\n",
+        source => 'trimmed.epl',
+        line => 2,
+    },
+    {
+        name => 'interpolation',
+        engine => Template::EmbeddedPerl->new(interpolation => 1),
+        template => "<% my \$value = 'ok' %>\n\$value\n<% die 'interpolation' %>\n",
+        source => 'interpolation.epl',
+        line => 3,
+    },
+    {
+        name => 'named args rewrite',
+        engine => Template::EmbeddedPerl->new(smart_lines => 1),
+        template => "# heading\n% args \$name = 'Ada'\n<% die 'args' %>\n",
+        source => 'args-lines.epl',
+        line => 3,
+    },
+) {
+    reports_location(
+        runtime_failure($guard->{engine}, $guard->{template}, $guard->{source}),
+        $guard->{source},
+        $guard->{line},
+        "$guard->{name} retains its existing correct mapping",
+    );
+}
+
+my $smart_output = Template::EmbeddedPerl->new(smart_lines => 1);
+is(
+    $smart_output->from_string(
+        "% my \$show = 1\n% if (\$show) {\n  <p>Shown</p>\n% }\n",
+        source => 'smart-output.epl',
+    )->render,
+    "  <p>Shown</p>\n",
+    'smart-line source sentinels do not restore directive output newlines',
+);
+is(
+    $smart_output->from_string("%= uc 'ok'\n", source => 'smart-expression.epl')->render,
+    'OK',
+    'smart expression output still consumes its trailing newline',
+);
+
 done_testing;
