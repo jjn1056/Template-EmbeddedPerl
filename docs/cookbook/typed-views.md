@@ -2,8 +2,8 @@
 
 This cookbook uses Perl 5.40. `Moo` is used only to make the typed examples
 concise and is a test dependency, not a runtime dependency of
-Template::EmbeddedPerl. The engine accepts any blessed view object. It never
-constructs or introspects Moo objects.
+Template::EmbeddedPerl. The engine accepts any blessed view object. Moo is not
+required by the engine.
 
 ## Untyped Pages
 
@@ -93,7 +93,7 @@ argument remains supported, but that object stays in `@_`; it is not inferred
 as `$self`.
 
 These complete Moo classes are illustrative. An application may use any other
-object system, provided it constructs blessed objects itself.
+object system that returns blessed objects from its constructors.
 
 ```perl
 package MyApp::View::HTML::ContactList;
@@ -149,53 +149,28 @@ MyApp::View::HTML::ContactList -> html/contact_list.epl
 Each package segment is converted independently: `HTML` becomes `html`,
 `HTMLPage` becomes `html_page`, and `ContactList` becomes `contact_list`.
 
-An application resolver owns logical-name expansion, class loading,
-construction, and its `root`/`parent` relationships. `build_view` receives the
-logical name, constructor arguments, and active render context. This resolver
-lets `template_for` choose a special item template while returning `undef` for
-all other views, which leaves convention lookup available.
-
-```perl
-package MyApp::View::Resolver;
-use v5.40;
-use Moo;
-
-sub build_view ($self, $logical_name, $args, $context) {
-    my $class = "MyApp::View::$logical_name";
-    unless ($class->can('new')) {
-        eval "require $class; 1" or die $@;
-    }
-    return $class->new(
-        %$args,
-        root => $context->root_view,
-        parent => $context->view,
-    );
-}
-
-sub template_for ($self, $view, $context) {
-    return 'components/contact_item' if $view->isa('MyApp::View::HTML::Item');
-    return;
-}
-```
-
-Place this resolver after the view class definitions when using one script:
-classes already defined in that script provide `new`, so the resolver does not
-try to require a nonexistent matching `.pm` file. Classes not yet loaded are
-required before construction.
+For a logical call such as `view 'HTML::Navbar', active => 'contacts'`, the
+engine prefixes `view_namespace`, loads `MyApp::View::HTML::Navbar`, and calls
+`->new(active => 'contacts')`. Moo remains optional; the engine only relies on
+an ordinary constructor returning a blessed object.
 
 Create the engine and root in application code. The root's lazy `navbar` is a
-preconstructed child: the core does not invoke `build_view` for it. The item is
-a logical child, so the resolver constructs it with the root and current parent.
+preconstructed child. The item is a logical child, so the engine constructs it
+with its supplied arguments.
 
 ```perl
-my $resolver = MyApp::View::Resolver->new;
 my $engine = Template::EmbeddedPerl->new(
     directories => ['/srv/app/templates', '/srv/shared/templates'],
     auto_escape => 1,
     smart_lines => 1,
     preamble => 'use v5.40;',
     view_namespace => 'MyApp::View',
-    view_resolver => $resolver,
+    helpers => {
+        path_for => sub {
+            my ($engine, $route, @args) = @_;
+            return $router->path_for($route, @args);
+        },
+    },
 );
 
 my $root = MyApp::View::HTML::ContactList->new(
@@ -233,8 +208,8 @@ child receives the original contact list as `root`.
 </section>
 ```
 
-The explicit navbar and resolver-selected item are ordinary templates in the
-same directories:
+The navbar and item use explicit template methods, while the contact list and
+page use the same ordered directories through convention lookup:
 
 `components/navbar.epl`:
 
@@ -248,11 +223,34 @@ same directories:
 <li><%= $self->contact->{name} %> (root: <%= $self->root->title %>; parent: <%= $self->parent->title %>)</li>
 ```
 
-The engine resolves a nonempty view `template` method first, then a nonempty
-resolver `template_for` result, then the `view_namespace` convention. In this
-example the navbar's explicit `components/navbar` wins, items use the resolver
-result, and contact list/page use convention lookup. All paths use the same
+Use a `template` method for every explicit template override:
+
+```perl
+package MyApp::View::HTML::Item;
+
+sub template { 'components/contact_item' }
+```
+
+The engine resolves a nonempty view `template` method first, then the
+`view_namespace` convention. In this example the navbar and item use explicit
+templates, and contact list/page use convention lookup. All paths use the same
 ordered `directories` search path.
+
+When logical children need dependency injection, configure the optional factory
+once. `$args` contains only values supplied by the template,
+`$context->view` is the current parent, and `$context->root_view` is the
+original typed root. Preconstructed objects bypass this callback.
+
+```perl
+view_factory => sub {
+    my ($class, $args, $context) = @_;
+    return $class->new(
+        %$args,
+        root => $context->root_view,
+        parent => $context->view,
+    );
+},
+```
 
 ## Failures and Reuse
 

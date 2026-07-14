@@ -1118,8 +1118,7 @@ I don't do anything smart to make sure you don't reference templates in dangerou
 So be careful to make sure you don't let application users specify the template path.
 
 The first matching file wins. Partials, layouts, explicit typed-view templates,
-resolver-supplied typed-view templates, and convention-derived typed-view
-templates use this same ordered search path.
+and convention-derived typed-view templates use this same ordered search path.
 
 =item * C<smart_lines>
 
@@ -1128,24 +1127,26 @@ directive. Default is C<0>. See L</Smart Lines and Named Arguments>.
 
 =item * C<view_namespace>
 
-Optional namespace prefix for convention-based typed-view template lookup. When
-a view has no explicit template and a resolver supplies none, the matching
-prefix is removed, C<::> becomes C</>, and each remaining CamelCase segment is
-converted to lowercase snake case. Acronym runs stay together: C<HTML>,
-C<HTMLPage>, and C<ContactList> become C<html>, C<html_page>, and
-C<contact_list>.
+Optional namespace prefix for logical typed-view class lookup and
+convention-based typed-view template lookup. For a logical name, the engine
+prefixes this namespace to find the class. For a view without an explicit
+template, the matching prefix is removed, C<::> becomes C</>, and each
+remaining CamelCase segment is converted to lowercase snake case. Acronym runs
+stay together: C<HTML>, C<HTMLPage>, and C<ContactList> become C<html>,
+C<html_page>, and C<contact_list>.
 
 For example, C<MyApp::View::HTML::ContactList> with
 C<view_namespace =E<gt> 'MyApp::View'> resolves C<html/contact_list> before the
 normal C<template_extension> is added.
 
-=item * C<view_resolver>
+=item * C<view_factory>
 
-Optional object used for typed views. C<template_for($view, $context)> may
-return a template identifier. C<build_view($logical_name, \%args, $context)>
-constructs a nested logical view. Construction, class loading, dependency
-injection, and C<root>/C<parent> relationships belong to the resolver, not the
-engine.
+Optional coderef used to construct nested logical typed views. It receives
+C<< ($class, \%args, $context) >> and must return a blessed object. C<$class>
+is the class resolved from the logical name and C<view_namespace>; C<\%args>
+contains only values supplied by the template. Use it for dependency injection,
+such as C<root> and C<parent> relationships. Without a factory, the engine
+calls C<< $class->new(%args) >>.
 
 =item * C<template_extension>
 
@@ -1457,25 +1458,22 @@ the same template precedence:
 
 A nonempty C<< $view->template >> result.
 
-=item 2.
-
-A nonempty C<< $resolver->template_for($view, $context) >> result.
-
-=item 3.
-
 The C<view_namespace> convention.
 
 =back
 
 Use the C<view> helper for a nested typed object. C<< view $object >> renders a
-preconstructed child. C<< view $logical_name, %args >> asks
-C<< $resolver->build_view($logical_name, \%args, $context) >> to construct one.
-The final coderef, if any, is a wrapper body. In that callback lexical C<$self>
-remains the caller; the callback argument is the wrapper object, and the
-wrapper template itself receives the wrapper as C<$self>.
+preconstructed child, which bypasses construction. C<< view $logical_name,
+%args >> resolves its class from C<view_namespace> and calls
+C<< $class->new(%args) >> by default. If configured, C<view_factory> alone
+performs construction and receives C<< ($class, \%args, $context) >>; use it
+to inject dependencies. The final coderef, if any, is a wrapper body. In that
+callback lexical C<$self> remains the caller; the callback argument is the
+wrapper object, and the wrapper template itself receives the wrapper as
+C<$self>.
 
-The core accepts any blessed object and does not construct or introspect Moo
-objects. L<docs/cookbook/typed-views.md> contains complete Moo examples for
+The core accepts any blessed object. Moo is used only by the test and cookbook
+examples. L<docs/cookbook/typed-views.md> contains complete Moo examples for
 applications that use it.
 
 =head1 HELPER FUNCTIONS

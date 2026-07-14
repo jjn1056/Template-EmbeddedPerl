@@ -58,41 +58,24 @@ sub write_template {
     has label => (is => 'ro', required => 1);
     has root => (is => 'ro');
     has parent => (is => 'ro');
+
+    sub template { 'components/contact_item' }
 }
 
 {
-    package Documentation::View::Resolver;
+    package Documentation::View::HTML::HelperMatrix;
     use Moo;
 
-    has calls => (is => 'ro', default => sub { [] });
+    has title => (is => 'ro', required => 1);
+}
 
-    sub build_view {
-        my ($self, $logical_name, $args, $context) = @_;
-        my $class = "Documentation::View::$logical_name";
-        unless ($class->can('new')) {
-            eval "require $class; 1" or die $@;
-        }
-        my $view = $class->new(
-            %$args,
-            root => $context->root_view,
-            parent => $context->view,
-        );
-        push $self->calls->@*, {
-            logical_name => $logical_name,
-            context => $context,
-            view => $view,
-        };
-        return $view;
-    }
+{
+    package Documentation::View::HTML::HelperWrapper;
+    use Moo;
 
-    sub template_for {
-        my ($self, $view, $context) = @_;
-        die 'template_for must not be consulted for an explicit Navbar template'
-            if $view->isa('Documentation::View::HTML::Navbar');
-        return 'components/contact_item'
-            if $view->isa('Documentation::View::HTML::ContactItem');
-        return;
-    }
+    has title => (is => 'ro', required => 1);
+    has root => (is => 'ro', required => 1);
+    has parent => (is => 'ro', required => 1);
 }
 
 my $temporary = tempdir(CLEANUP => 1);
@@ -141,8 +124,29 @@ write_template($first, 'components/navbar', <<'EPL');
 EPL
 
 write_template($first, 'components/contact_item', <<'EPL');
-<li class="contact" data-source="resolver"><%= $self->label %> root=<%= $self->root ? $self->root->title : 'none' %> parent=<%= $self->parent ? $self->parent->title : 'none' %></li>
+<li class="contact" data-source="object"><%= typed_label $self->label %> root=<%= $self->root ? $self->root->title : 'none' %> parent=<%= $self->parent ? $self->parent->title : 'none' %></li>
 EPL
+
+write_template(
+    $first,
+    'html/helper_matrix',
+    q{<% layout 'typed/helper_layout' %><root><%= typed_label 'root:' . $self->title %>|<%= partial 'typed/helper_partial' %>|<%= view 'HTML::HelperWrapper', title => 'wrapped', sub { %><%= typed_label 'body:' . $self->title %><% } %></root>},
+);
+write_template(
+    $first,
+    'html/helper_wrapper',
+    q{<wrapper><%= typed_label 'wrapper:' . $self->title %>|<%= yield %></wrapper>},
+);
+write_template(
+    $first,
+    'typed/helper_partial',
+    q{<partial><%= typed_label 'partial:' . $self->title %></partial>},
+);
+write_template(
+    $first,
+    'typed/helper_layout',
+    q{<layout><%= typed_label 'layout:' . $self->title %>|<%= yield %></layout>},
+);
 
 my $lazy_default_calls = 0;
 my $untyped_engine = Template::EmbeddedPerl->new(
@@ -168,14 +172,44 @@ $untyped_engine->from_file('pages/index')->render(
 );
 is($lazy_default_calls, 1, 'an explicit undef does not evaluate a lazy argument default');
 
-my $resolver = Documentation::View::Resolver->new;
+my @factory_calls;
 my $typed_engine = Template::EmbeddedPerl->new(
     directories => [$first, $second],
     auto_escape => 1,
     smart_lines => 1,
     view_namespace => 'Documentation::View',
-    view_resolver => $resolver,
+    helpers => {
+        typed_label => sub {
+            my ($engine, $label) = @_;
+            return uc $label;
+        },
+    },
+    view_factory => sub {
+        my ($class, $args, $context) = @_;
+        my $view = $class->new(
+            %$args,
+            root => $context->root_view,
+            parent => $context->view,
+        );
+        push @factory_calls, {
+            class => $class,
+            args => {%$args},
+            context => $context,
+            view => $view,
+        };
+        return $view;
+    },
 );
+
+is(
+    $typed_engine->render_view(
+        Documentation::View::HTML::HelperMatrix->new(title => 'Root'),
+    ),
+    '<layout>LAYOUT:ROOT|<root>ROOT:ROOT|<partial>PARTIAL:ROOT</partial>|'
+        . '<wrapper>WRAPPER:WRAPPED|BODY:ROOT</wrapper></root></layout>',
+    'helpers work with typed self in roots, partials, layouts, wrapper bodies, and wrapper templates',
+);
+
 my $root = Documentation::View::HTMLPage::ContactList->new(
     title => 'Contacts',
     prebuilt_item => Documentation::View::HTML::ContactItem->new(
@@ -186,16 +220,24 @@ my $root = Documentation::View::HTMLPage::ContactList->new(
 is(
     $typed_engine->render_view($root),
     "<section class=\"contacts\" data-source=\"convention\"><nav data-source=\"object\">contacts root=Contacts parent=Contacts</nav>\n"
-        . "<li class=\"contact\" data-source=\"resolver\">&lt;Prebuilt&gt; root=none parent=none</li>\n"
-        . "<li class=\"contact\" data-source=\"resolver\">&lt;Logical&gt; root=Contacts parent=Contacts</li>\n"
+        . "<li class=\"contact\" data-source=\"object\">&lt;PREBUILT&gt; root=none parent=none</li>\n"
+        . "<li class=\"contact\" data-source=\"object\">&lt;LOGICAL&gt; root=Contacts parent=Contacts</li>\n"
         . "<article data-source=\"convention\" data-wrapper=\"Shell Contacts\"><h1>Shell Contacts</h1><p>body-self=Contacts; callback=Shell Contacts</p>"
         . "<nav data-source=\"object\">wrapper root=Contacts parent=Shell Contacts</nav>\n</article>\n</section>\n",
-    'render_view and nested view apply object template, resolver template, and convention precedence',
+    'render_view and nested view apply object template and convention precedence',
 );
 
-my ($root_navbar) = grep { $_->{logical_name} eq 'HTML::Navbar' && $_->{view}->active eq 'contacts' } $resolver->calls->@*;
-my ($wrapper) = grep { $_->{logical_name} eq 'HTMLPage::Shell' } $resolver->calls->@*;
-my ($wrapper_navbar) = grep { $_->{logical_name} eq 'HTML::Navbar' && $_->{view}->active eq 'wrapper' } $resolver->calls->@*;
+my ($root_navbar) = grep {
+    $_->{class} eq 'Documentation::View::HTML::Navbar'
+        && $_->{view}->active eq 'contacts'
+} @factory_calls;
+my ($wrapper) = grep {
+    $_->{class} eq 'Documentation::View::HTMLPage::Shell'
+} @factory_calls;
+my ($wrapper_navbar) = grep {
+    $_->{class} eq 'Documentation::View::HTML::Navbar'
+        && $_->{view}->active eq 'wrapper'
+} @factory_calls;
 
 is($root_navbar->{view}->root, $root, 'logical root child receives the typed root identity');
 is($root_navbar->{view}->parent, $root, 'logical root child receives the caller as parent');
@@ -203,5 +245,9 @@ is($wrapper->{view}->root, $root, 'logical wrapper receives the typed root ident
 is($wrapper->{view}->parent, $root, 'logical wrapper receives the body caller as parent');
 is($wrapper_navbar->{context}->view, $wrapper->{view}, 'wrapper template scopes nested view construction to the wrapper');
 is($wrapper_navbar->{view}->parent, $wrapper->{view}, 'wrapper template child receives the wrapper as parent');
+ok(
+    !(grep { $_->{view} == $root->prebuilt_item } @factory_calls),
+    'preconstructed child bypasses the view factory',
+);
 
 done_testing;

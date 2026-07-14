@@ -247,7 +247,7 @@ Creates a new `Template::EmbeddedPerl` object. Accepts the following arguments:
     So be careful to make sure you don't let application users specify the template path.
 
     The same ordered lookup is used by partials, layouts, explicit typed-view
-    templates, convention-based typed-view templates, and resolver results.
+    templates, and convention-based typed-view templates.
 
 - `smart_lines`
 
@@ -257,18 +257,19 @@ Creates a new `Template::EmbeddedPerl` object. Accepts the following arguments:
 
 - `view_namespace`
 
-    Namespace prefix used to derive a template identifier for a typed view when
-    neither its `template` method nor a view resolver supplies one. The matching
-    prefix is removed, `::` becomes `/`, and each CamelCase package segment becomes
-    lowercase snake case. For example, `MyApp::View::HTML::ContactList` maps to
-    `html/contact_list`.
+    Namespace prefix used to resolve logical typed-view classes and derive a
+    convention template identifier. Logical names are prefixed with the namespace;
+    for template lookup, the matching prefix is removed, `::` becomes `/`, and each
+    CamelCase package segment becomes lowercase snake case. For example,
+    `MyApp::View::HTML::ContactList` maps to `html/contact_list`.
 
-- `view_resolver`
 
-    Optional object implementing `template_for($view, $context)` and, for logical
-    child views, `build_view($logical_name, \%args, $context)`. The resolver owns
-    construction and relationships such as `root` and `parent`; the engine only
-    accepts the resulting blessed object.
+- `view_factory`
+
+    Optional coderef for logical child views:
+    `sub ($class, $args, $context) { ... }`. It receives the resolved class and
+    template-supplied arguments, and can inject dependencies such as `root` and
+    `parent`. Without it, the engine calls `$class->new(%args)`.
 
 - `template_extension`
 
@@ -527,9 +528,9 @@ The module provides a set of default helper functions that can be used in templa
 - `view`
 
     `view $object` renders a preconstructed child; `view $logical_name, %args`
-    asks `view_resolver->build_view` to construct one. A final coderef is a
-    wrapper body; inside it `$self` remains the caller and the callback argument
-    is the new wrapper.
+    resolves its class through `view_namespace` and calls `$class->new(%args)`,
+    or `view_factory` when configured. A final coderef is a wrapper body; inside
+    it `$self` remains the caller and the callback argument is the new wrapper.
 
 # ERROR HANDLING
 
