@@ -25,7 +25,6 @@ sub new {
         smart_lines => 1,
         auto_escape => 1,
         use_cache => 1,
-        preamble => 'use v5.40;',
         view_namespace => 'Contacts::Typed::View',
         helpers => {
             display_heading => sub {

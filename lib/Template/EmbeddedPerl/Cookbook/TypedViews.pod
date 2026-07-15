@@ -133,9 +133,10 @@ becomes the wrapper body:
 
 B<Fragment: C<examples/contacts/typed/templates/html/contact_list.epl>>
 
-  %= view 'HTML::Page', title => $self->title, sub ($page) {
+  %= view 'HTML::Page', title => $self->title, sub {
+  % my ($page) = @_;
   <main>
-  <h1><%= display_heading $self->title %></h1>
+  <h1><%= display_heading $page->title %></h1>
   %= view $self->prebuilt_badge
   <ul>
   % for my $contact (@{$self->contacts}) {
@@ -146,9 +147,11 @@ B<Fragment: C<examples/contacts/typed/templates/html/contact_list.epl>>
   % }
 
 Inside that callback, lexical C<$self> remains the caller, the
-C<ContactList>. C<$page> is the newly constructed C<Page>, which is useful
-when the body needs the wrapper object explicitly. The C<Page> template sees a
-different C<$self>: it is the Page object itself.
+C<ContactList>. The portable C<< my ($page) = @_ >> unpacking receives the
+newly constructed C<Page>. This endpoint uses C<< $page->title >> for its
+heading; it is the same title as the ContactList, so the rendered HTML remains
+unchanged. The C<Page> template sees a different C<$self>: it is the Page
+object itself.
 
 B<Fragment: C<examples/contacts/typed/templates/html/page.epl>>
 
@@ -191,16 +194,16 @@ B<Fragment: C<examples/contacts/typed/lib/Contacts/Typed/App.pm>>
 
 C<$context-E<gt>root_view> is the original C<ContactList> passed to
 C<render_view>. C<$context-E<gt>view> is the caller at the logical C<view>
-site. The Task 4 parity assertions show the resulting identities: the Page
-receives the ContactList as both root and parent, and each ContactItem in the
-Page callback also receives the ContactList as parent because the callback
-keeps the caller scope. A logical child rendered inside a wrapper template
-would instead receive that wrapper as parent while retaining the original root.
+site. C<t/cookbook_examples.t> checks the wrapper, then confirms its root and
+parent are the ContactList. It also confirms that each ContactItem in the Page
+callback receives the ContactList as parent because the callback keeps the
+caller scope. A logical child rendered inside a wrapper template would instead
+receive that wrapper as parent while retaining the original root.
 
 The C<prebuilt_badge> object was constructed by the application, not by a
 logical name. Rendering C<< view $self->prebuilt_badge >> bypasses
-C<view_factory>; the same Task 4 assertions prove no Badge factory record was
-created. Preconstructed objects therefore let application code own special
+C<view_factory>; C<t/cookbook_examples.t> verifies that no Badge factory record
+was created. Preconstructed objects therefore let application code own special
 construction while logical names remain convenient for regular children.
 
 =head1 COMPOSING THE VIEW TREE
@@ -245,8 +248,10 @@ page, a one-off partial, or a layout whose behavior is only local composition.
 The typed application moves the page, items, and wrapper into object contracts.
 Use that structure when constructor validation, reusable view methods,
 injected root/parent relationships, or framework-owned construction make the
-extra classes worthwhile. Both designs use the same templates, helpers,
-layouts, named content, escaping, and render engine.
+extra classes worthwhile. The examples use equivalent separate template trees
+and engine instances. They deliberately demonstrate the same helpers, layouts,
+named content, escaping, and byte-for-byte output while each endpoint remains
+independently runnable.
 
 Moo is a concise implementation choice in the checked-in typed Contacts
 example, not a requirement of Template::EmbeddedPerl. Any blessed object that

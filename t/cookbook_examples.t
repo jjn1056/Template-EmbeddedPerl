@@ -1,14 +1,43 @@
 use strict;
 use warnings;
 
-use Cwd qw(getcwd);
+BEGIN {
+    require Cwd;
+    require File::Basename;
+    require File::Spec;
+
+    my $test_file = Cwd::abs_path(__FILE__);
+    my $root = Cwd::abs_path(File::Spec->catdir(
+        File::Basename::dirname($test_file),
+        File::Spec->updir,
+    ));
+    unshift @INC, File::Spec->catdir($root, 'lib');
+}
+
+use Cwd qw(abs_path getcwd);
+use File::Basename qw(dirname);
+use File::Path qw(make_path);
 use File::Spec;
+use File::Temp qw(tempdir);
 use IPC::Open3;
+use JSON::PP qw(decode_json);
 use Symbol qw(gensym);
 use Test::Most;
 use Template::EmbeddedPerl;
 
-my $root = File::Spec->rel2abs('.');
+my $test_file = abs_path(__FILE__);
+my $test_root = abs_path(File::Spec->catdir(dirname($test_file), File::Spec->updir));
+my $root = $test_root;
+is(
+    $root,
+    abs_path(File::Spec->catdir(dirname($test_file), File::Spec->updir)),
+    'cookbook test anchors the distribution root to its absolute test-file location',
+);
+is(
+    abs_path($INC{'Template/EmbeddedPerl.pm'}),
+    File::Spec->catfile($root, qw(lib Template EmbeddedPerl.pm)),
+    'cookbook test loads Template::EmbeddedPerl from its distribution root',
+);
 my $untyped_root = File::Spec->catdir($root, qw(examples contacts untyped));
 my $untyped_lib = File::Spec->catdir($untyped_root, 'lib');
 
@@ -153,6 +182,71 @@ sub read_file {
     return $content;
 }
 
+sub write_fixture {
+    my ($root, $identifier, $content) = @_;
+    my @parts = split m{/}, "$identifier.epl";
+    my $path = File::Spec->catfile($root, @parts);
+    my (undef, $directory) = File::Spec->splitpath($path);
+
+    make_path($directory);
+    open my $fh, '>', $path or die "Cannot write $path: $!";
+    print {$fh} $content;
+    close $fh or die "Cannot close $path: $!";
+
+    return $path;
+}
+
+my $dist_ini = read_file(File::Spec->catfile($root, 'dist.ini'));
+like(
+    $dist_ini,
+    qr/^\[MetaNoIndex\]\ndirectory = examples$/m,
+    'distribution metadata excludes shipped examples from PAUSE indexing',
+);
+
+SKIP: {
+    my $built_meta_path = $ENV{TEMPLATE_EMBEDDED_PERL_BUILT_META};
+    skip 'built META.json path was not provided', 2 unless defined $built_meta_path;
+
+    ok(-f $built_meta_path, 'built META.json exists');
+    skip 'built META.json is unavailable', 1 unless -f $built_meta_path;
+    my $built_meta = decode_json(read_file($built_meta_path));
+    is_deeply(
+        $built_meta->{no_index},
+        {directory => ['examples']},
+        'built metadata excludes the examples directory from indexing',
+    );
+}
+
+my $typed_app_path = File::Spec->catfile(
+    $typed_root, qw(lib Contacts Typed App.pm),
+);
+my $typed_app_source = read_file($typed_app_path);
+unlike(
+    $typed_app_source,
+    qr/preamble\s*=>\s*['"]use v5\.40;/,
+    'typed Contacts application does not require Perl 5.40 for templates',
+);
+
+my $typed_contact_list_path = File::Spec->catfile(
+    $typed_root, qw(templates html contact_list.epl),
+);
+my $typed_contact_list = read_file($typed_contact_list_path);
+unlike(
+    $typed_contact_list,
+    qr/sub\s*\(\s*\$page\s*\)/,
+    'typed wrapper callback avoids version-specific signature syntax',
+);
+like(
+    $typed_contact_list,
+    qr/%\s+my\s+\(\$page\)\s*=\s*\@_;/,
+    'typed wrapper callback unpacks its wrapper argument portably',
+);
+like(
+    $typed_contact_list,
+    qr/display_heading\s+\$page->title/,
+    'typed wrapper callback uses its wrapper argument without changing output',
+);
+
 my $tutorial_path = File::Spec->catfile(
     $root, qw(lib Template EmbeddedPerl Tutorial.pod),
 );
@@ -181,6 +275,74 @@ like(
     qr{examples/contacts/untyped/app\.pl},
     'tutorial points to the runnable untyped application',
 );
+like(
+    $tutorial,
+    qr/^=head2 Set up the checked-in example$/m,
+    'tutorial starts newcomer setup with a distinct section',
+);
+like(
+    $tutorial,
+    qr{examples/contacts/\n\s+untyped/\n\s+app\.pl\n\s+lib/\n\s+Contacts/\n\s+Untyped/\n\s+App\.pm\n\s+templates/\n\s+contacts/\n\s+item\.epl\n\s+layouts/\n\s+application\.epl\n\s+pages/\n\s+contacts\.epl},
+    'tutorial shows the exact checked-in untyped example tree',
+);
+like(
+    $tutorial,
+    qr/\{name => '<Ada>', email => 'ada\@example\.test'\}/,
+    'tutorial shows the in-memory contact fixture',
+);
+for my $fragment (
+    'compile diagnostic',
+    'runtime diagnostic',
+    'warning diagnostic',
+    'file-backed diagnostic',
+    'composed render diagnostic',
+) {
+    like(
+        $tutorial,
+        qr/B<Fragment: \Q$fragment\E>/,
+        "tutorial labels the $fragment snippet as incomplete",
+    );
+}
+like(
+    $tutorial,
+    qr/Global symbol "\$missing".*\n\s*1: first\n\s*2: <%= \$missing %>/s,
+    'tutorial shows the compile message with its nearby template excerpt',
+);
+like(
+    $tutorial,
+    qr/tutorial runtime at tutorial-runtime\.epl line 2.*Render stack:\n\s*root tutorial-runtime\.epl \(tutorial-runtime\.epl\)/s,
+    'tutorial shows runtime source context and its render stack',
+);
+like(
+    $tutorial,
+    qr/tutorial warning at tutorial-warning\.epl line 2\..*\n\s*1: first\n\s*2: <% warn 'tutorial warning' %>/s,
+    'tutorial shows warning output beside its nearby template excerpt',
+);
+like(
+    $tutorial,
+    qr/^=head2 Diagnose a file-backed template$/m,
+    'tutorial includes a file-backed failure workflow',
+);
+like(
+    $tutorial,
+    qr/from_file\('pages\/broken'\).*root pages\/broken/s,
+    'tutorial ties file-backed diagnostics to a resolved source and root frame',
+);
+like(
+    $tutorial,
+    qr/^=head2 Read a composed render stack$/m,
+    'tutorial includes a composed render-stack workflow',
+);
+like(
+    $tutorial,
+    qr/partial partials\/broken \(/,
+    'tutorial shows the nested partial in a composed render stack',
+);
+unlike(
+    $tutorial,
+    qr/use v5\.40/,
+    'tutorial does not present Perl 5.40 as a template requirement',
+);
 
 my $compile_error = eval {
     Template::EmbeddedPerl->from_string(
@@ -193,6 +355,11 @@ like(
     $compile_error,
     qr/at tutorial-compile\.epl line 2/,
     'tutorial compile failure reports its template source and line',
+);
+like(
+    $compile_error,
+    qr/1: first\n2: <%= \$missing %>/,
+    'tutorial compile failure includes a nearby template excerpt',
 );
 
 my $runtime_error = eval {
@@ -207,6 +374,11 @@ like(
     qr/tutorial runtime at tutorial-runtime\.epl line 2/,
     'tutorial runtime failure reports its template source and line',
 );
+like(
+    $runtime_error,
+    qr/Render stack:\n  root tutorial-runtime\.epl \(tutorial-runtime\.epl\)\n\z/,
+    'tutorial runtime failure includes its root render stack frame',
+);
 
 my @warnings;
 {
@@ -216,10 +388,52 @@ my @warnings;
         source => 'tutorial-warning.epl',
     )->render;
 }
-like(
+is(
     join('', @warnings),
-    qr/tutorial warning at tutorial-warning\.epl line 2/,
-    'tutorial warning reports its template source and line',
+    "tutorial warning at tutorial-warning.epl line 2.\n",
+    'tutorial warning reports its exact template source and line',
+);
+
+my $diagnostic_directory = tempdir(CLEANUP => 1);
+my $file_backed_source = write_fixture(
+    $diagnostic_directory,
+    'pages/broken',
+    "before\n<% die 'file-backed runtime' %>\n",
+);
+my $file_backed_error = eval {
+    Template::EmbeddedPerl->new(
+        directories => [$diagnostic_directory],
+        smart_lines => 1,
+    )->from_file('pages/broken')->render;
+    '';
+} || $@;
+like(
+    $file_backed_error,
+    qr/file-backed runtime at \Q$file_backed_source\E line 2\n\n1: before\n2: <% die 'file-backed runtime' %>\n\n\nRender stack:\n  root pages\/broken \(\Q$file_backed_source\E\)\n\z/,
+    'file-backed diagnostics preserve the resolved path, excerpt, and root frame',
+);
+
+my $composed_root_source = write_fixture(
+    $diagnostic_directory,
+    'pages/contacts',
+    "before\n%= partial 'partials/broken'\nafter\n",
+);
+my $composed_partial_source = write_fixture(
+    $diagnostic_directory,
+    'partials/broken',
+    "child before\n<% die 'composed runtime' %>\n",
+);
+my $composed_error = eval {
+    Template::EmbeddedPerl->new(
+        directories => [$diagnostic_directory],
+        smart_lines => 1,
+    )->from_file('pages/contacts')->render;
+    '';
+} || $@;
+like(
+    $composed_error,
+    qr/composed runtime at \Q$composed_partial_source\E line 2.*Render stack:\n  root pages\/contacts \(\Q$composed_root_source\E\)\n  partial partials\/broken \(\Q$composed_partial_source\E\)\n\z/s,
+    'composed diagnostics retain ordered root and partial render-stack frames',
 );
 
 my $cookbook_path = File::Spec->catfile(
@@ -274,6 +488,36 @@ like(
     $typed_views,
     qr/B<Experimental:> Typed view support, including C<render_view>, C<view>, C<view_namespace>, and C<view_factory>, may change as real-world integration needs become clearer\./,
     'typed-view POD carries the exact experimental notice',
+);
+unlike(
+    $typed_views,
+    qr/sub\s*\(\s*\$page\s*\)/,
+    'typed-view POD avoids version-specific callback signature syntax',
+);
+like(
+    $typed_views,
+    qr/sub \{\n  % my \(\$page\) = \@_;.*display_heading \$page->title/s,
+    'typed-view POD shows portable callback unpacking and meaningful wrapper use',
+);
+unlike(
+    $typed_views,
+    qr/Task 4(?: parity)? assertions/,
+    'typed-view POD does not refer readers to internal task assertions',
+);
+like(
+    $typed_views,
+    qr/C<t\/cookbook_examples\.t>.*wrapper.*root.*parent/s,
+    'typed-view POD points readers to the checked-in wrapper and identity tests',
+);
+unlike(
+    $typed_views,
+    qr/Both designs use the same templates, helpers, layouts, named content, escaping, and render engine\./,
+    'typed-view POD does not claim the examples share one template tree or engine',
+);
+like(
+    $typed_views,
+    qr/equivalent separate template trees\s+and engine instances/,
+    'typed-view POD accurately distinguishes the independent example implementations',
 );
 
 my $module = read_file(File::Spec->catfile(

@@ -60,6 +60,40 @@ The complete application prints this page when it is run:
   </body>
   </html>
 
+=head2 Set up the checked-in example
+
+The runnable newcomer endpoint has this exact tree:
+
+  examples/contacts/
+    untyped/
+      app.pl
+      lib/
+        Contacts/
+          Untyped/
+            App.pm
+      templates/
+        contacts/
+          item.epl
+        layouts/
+          application.epl
+        pages/
+          contacts.epl
+
+Run C<perl examples/contacts/untyped/app.pl> from the distribution root. The
+C<app.pl> entry point only constructs C<Contacts::Untyped::App>, renders it,
+and prints the resulting HTML.
+
+The application keeps its deterministic Contacts data in memory. The
+checked-in fixture is:
+
+B<Fragment: application fixture>
+  sub contacts {
+      return [
+          {name => '<Ada>', email => 'ada@example.test'},
+          {name => 'Grace', email => 'grace@example.test'},
+      ];
+  }
+
 The checked-in C<Contacts::Untyped::App> is intentionally a small application
 boundary. Its constructor creates one engine with the template directory,
 smart lines, and automatic HTML escaping enabled:
@@ -350,35 +384,55 @@ separate template sandbox.
 
 =head1 DIAGNOSING FAILURES
 
-Give string templates a C<source> name so errors identify both the template
-and its original template line. This compile failure reports line 2 of
-C<tutorial-compile.epl>:
+=head2 Read a diagnostic with its source excerpt
 
-B<Fragment:>
-  my $error = eval {
+Give string templates a C<source> name so compilation and runtime failures
+identify both the source and original template line. The following incomplete
+fragment deliberately refers to an undeclared variable:
+
+B<Fragment: compile diagnostic>
+  my $compile_error = eval {
       Template::EmbeddedPerl->from_string(
           "first\n<%= \$missing %>\n",
           source => 'tutorial-compile.epl',
       );
       '';
   } || $@;
-  # ... at tutorial-compile.epl line 2
+  print $compile_error;
 
-The source name and line are also stable for a runtime exception:
+The current diagnostic is:
 
-B<Fragment:>
-  my $error = eval {
+  Global symbol "$missing" requires explicit package name (did you forget to declare "my $missing"?) at tutorial-compile.epl line 2
+
+  1: first
+  2: <%= $missing %>
+
+For a runtime failure, the engine also records the top-level render frame:
+
+B<Fragment: runtime diagnostic>
+  my $runtime_error = eval {
       Template::EmbeddedPerl->from_string(
           "first\n<% die 'tutorial runtime' %>\n",
           source => 'tutorial-runtime.epl',
       )->render;
       '';
   } || $@;
-  # tutorial runtime at tutorial-runtime.epl line 2
+  print $runtime_error;
 
-Warnings retain the same location when captured by the caller:
+  tutorial runtime at tutorial-runtime.epl line 2
 
-B<Fragment:>
+  1: first
+  2: <% die 'tutorial runtime' %>
+
+
+  Render stack:
+    root tutorial-runtime.epl (tutorial-runtime.epl)
+
+Warnings preserve their source and line when captured by the caller. Unlike a
+compile or runtime failure, a warning itself does not include the source
+excerpt, so inspect the named template line beside the message:
+
+B<Fragment: warning diagnostic>
   my @warnings;
   {
       local $SIG{__WARN__} = sub { push @warnings, @_ };
@@ -387,11 +441,80 @@ B<Fragment:>
           source => 'tutorial-warning.epl',
       )->render;
   }
-  # tutorial warning at tutorial-warning.epl line 2
+  print join '', @warnings;
 
-C<preamble> adds Perl code before the generated template subroutine without
-changing reported template line numbers. Use it for required pragmas or module
-imports, and keep every source name meaningful for diagnostics.
+  tutorial warning at tutorial-warning.epl line 2.
+
+  1: first
+  2: <% warn 'tutorial warning' %>
+
+=head2 Diagnose a file-backed template
+
+Files give the same diagnostics with their resolved absolute path, which is
+usually easier to follow than an anonymous string. Create this scratch file:
+
+B<Complete scratch file: C</tmp/contacts-diagnostics/pages/broken.epl>>
+  before
+  <% die 'file-backed runtime' %>
+
+Render it through an engine whose directory is C</tmp/contacts-diagnostics>:
+
+B<Fragment: file-backed diagnostic>
+  my $engine = Template::EmbeddedPerl->new(
+      directories => ['/tmp/contacts-diagnostics'],
+      smart_lines => 1,
+  );
+  my $error = eval { $engine->from_file('pages/broken')->render; '' } || $@;
+  print $error;
+
+  file-backed runtime at /tmp/contacts-diagnostics/pages/broken.epl line 2
+
+  1: before
+  2: <% die 'file-backed runtime' %>
+
+
+  Render stack:
+    root pages/broken (/tmp/contacts-diagnostics/pages/broken.epl)
+
+Keep the source name or file path in the diagnostic. It identifies the broken
+template even when the render started in a different application module.
+
+=head2 Read a composed render stack
+
+When composition crosses files, read the render stack from the root toward the
+failure. These two complete scratch files make the relationship explicit:
+
+B<Complete scratch file: C</tmp/contacts-diagnostics/pages/contacts.epl>>
+  before
+  %= partial 'partials/broken'
+  after
+
+B<Complete scratch file: C</tmp/contacts-diagnostics/partials/broken.epl>>
+  child before
+  <% die 'composed runtime' %>
+
+Render the root page with the same directory configuration:
+
+B<Fragment: composed render diagnostic>
+  my $error = eval { $engine->from_file('pages/contacts')->render; '' } || $@;
+  print $error;
+
+  composed runtime at /tmp/contacts-diagnostics/partials/broken.epl line 2
+
+  1: child before
+  2: <% die 'composed runtime' %>
+
+
+  Render stack:
+    root pages/contacts (/tmp/contacts-diagnostics/pages/contacts.epl)
+    partial partials/broken (/tmp/contacts-diagnostics/partials/broken.epl)
+
+Repair the local partial first, then use the preceding root and partial frames
+to find the composition path that reached it. C<preamble> can add a required
+import before the generated template subroutine without changing reported
+template line numbers. The Contacts application needs no preamble; add one only
+for a deliberate import and keep template syntax compatible with the Perl
+version your application supports.
 
 =head1 REUSE AND PRODUCTION CONFIGURATION
 
@@ -411,6 +534,7 @@ little from an in-memory cache.
 
 Configure shared and application templates in deliberate order:
 
+B<Fragment: production configuration>
   my $engine = Template::EmbeddedPerl->new(
       directories => [
           '/srv/contacts/templates',
@@ -418,12 +542,14 @@ Configure shared and application templates in deliberate order:
       ],
       smart_lines => 1,
       auto_escape => 1,
-      preamble => 'use v5.40;',
       use_cache => 1,
   );
 
-The first matching file wins. Do not let request data choose a template path,
-and do not compile templates supplied by untrusted users. Templates can execute
+The first matching file wins. This application does not need a C<preamble>.
+Add one only for an explicit import, and use syntax compatible with the Perl
+version your application supports rather than treating a version preamble as a
+template requirement. Do not let request data choose a template path, and do
+not compile templates supplied by untrusted users. Templates can execute
 arbitrary Perl, so path ordering and trusted sources are production security
 boundaries rather than convenience settings.
 
