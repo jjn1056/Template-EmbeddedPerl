@@ -87,6 +87,7 @@ The application keeps its deterministic Contacts data in memory. The
 checked-in fixture is:
 
 B<Fragment: application fixture>
+
   sub contacts {
       return [
           {name => '<Ada>', email => 'ada@example.test'},
@@ -99,6 +100,7 @@ boundary. Its constructor creates one engine with the template directory,
 smart lines, and automatic HTML escaping enabled:
 
 B<Fragment:>
+
   sub new {
       my ($class, %args) = @_;
       my $root = $args{root} || File::Spec->rel2abs(
@@ -131,6 +133,7 @@ The public rendering role is equally small. It supplies the in-memory
 contacts, accepts named overrides, and delegates to the root page:
 
 B<Fragment:>
+
   sub render {
       my ($self, %args) = @_;
       return $self->{engine}->from_file('pages/contacts')->render(
@@ -159,6 +162,7 @@ and a line beginning with C<%=> outputs an expression. The root page uses
 these exact declarations:
 
 B<Fragment:>
+
   % args $contacts, $title = 'Contacts', $heading = sub { display_heading($title) }
   % layout 'layouts/application', title => $title
 
@@ -170,6 +174,7 @@ executable directive in a template. Once it is present, call C<render> with
 named key/value pairs rather than depending on positional order:
 
 B<Fragment:>
+
   $page->render(
       contacts => $app->contacts,
       title => 'Directory',
@@ -185,6 +190,7 @@ default:
 The declaration has three kinds of argument:
 
 B<Fragment:>
+
   % args $contacts, $title = 'Contacts', $heading = sub { display_heading($title) }
 
 C<$contacts> has no default, so it is required. The application always passes
@@ -195,6 +201,7 @@ absent, after earlier arguments such as C<$title> have been established.
 These calls show the complete behavior:
 
 B<Fragment:>
+
   $page->render(contacts => $contacts);                    # lazy default runs
   $page->render(contacts => $contacts, title => 'People');  # heading is PEOPLE
   $page->render(contacts => $contacts, heading => 'Index'); # lazy default does not run
@@ -248,6 +255,7 @@ contract:
 The page invokes it once for each record:
 
 B<Fragment:>
+
   % for my $contact (@$contacts) {
   %= partial 'contacts/item', contact => $contact, root_title => $title, parent_title => $title
   % }
@@ -275,6 +283,7 @@ that wrapper after rendering:
 This is the page declaration:
 
 B<Fragment:>
+
   % layout 'layouts/application', title => $title
 
 C<layout> registers a deferred wrapper; it does not render the layout at that
@@ -310,6 +319,7 @@ The Contacts page contributes this visible metadata to the layout's C<head>:
 It uses C<content_replace> before writing the page body:
 
 B<Fragment:>
+
   %= content_replace 'head', sub {
   <meta name="section" content="contacts">
   % }
@@ -321,6 +331,7 @@ content is nonempty, which lets a layout conditionally render an optional
 slot:
 
 B<Fragment:>
+
   % if (has_content 'head') {
   %= yield 'head'
   % }
@@ -368,6 +379,7 @@ The application's helper closes over its counter so the lazy default can be
 observed:
 
 B<Fragment:>
+
   display_heading => sub {
       my ($engine, $value) = @_;
       $self->{heading_calls}++;
@@ -391,6 +403,7 @@ identify both the source and original template line. The following incomplete
 fragment deliberately refers to an undeclared variable:
 
 B<Fragment: compile diagnostic>
+
   my $compile_error = eval {
       Template::EmbeddedPerl->from_string(
           "first\n<%= \$missing %>\n",
@@ -410,6 +423,7 @@ The current diagnostic is:
 For a runtime failure, the engine also records the top-level render frame:
 
 B<Fragment: runtime diagnostic>
+
   my $runtime_error = eval {
       Template::EmbeddedPerl->from_string(
           "first\n<% die 'tutorial runtime' %>\n",
@@ -433,6 +447,7 @@ compile or runtime failure, a warning itself does not include the source
 excerpt, so inspect the named template line beside the message:
 
 B<Fragment: warning diagnostic>
+
   my @warnings;
   {
       local $SIG{__WARN__} = sub { push @warnings, @_ };
@@ -454,12 +469,14 @@ Files give the same diagnostics with their resolved absolute path, which is
 usually easier to follow than an anonymous string. Create this scratch file:
 
 B<Complete scratch file: C</tmp/contacts-diagnostics/pages/broken.epl>>
+
   before
   <% die 'file-backed runtime' %>
 
 Render it through an engine whose directory is C</tmp/contacts-diagnostics>:
 
 B<Fragment: file-backed diagnostic>
+
   my $engine = Template::EmbeddedPerl->new(
       directories => ['/tmp/contacts-diagnostics'],
       smart_lines => 1,
@@ -485,17 +502,20 @@ When composition crosses files, read the render stack from the root toward the
 failure. These two complete scratch files make the relationship explicit:
 
 B<Complete scratch file: C</tmp/contacts-diagnostics/pages/contacts.epl>>
+
   before
   %= partial 'partials/broken'
   after
 
 B<Complete scratch file: C</tmp/contacts-diagnostics/partials/broken.epl>>
+
   child before
   <% die 'composed runtime' %>
 
 Render the root page with the same directory configuration:
 
 B<Fragment: composed render diagnostic>
+
   my $error = eval { $engine->from_file('pages/contacts')->render; '' } || $@;
   print $error;
 
@@ -535,6 +555,7 @@ little from an in-memory cache.
 Configure shared and application templates in deliberate order:
 
 B<Fragment: production configuration>
+
   my $engine = Template::EmbeddedPerl->new(
       directories => [
           '/srv/contacts/templates',

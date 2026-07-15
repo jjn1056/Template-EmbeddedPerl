@@ -43,6 +43,7 @@ The following engine looks for C<pages/contacts.epl> in the application
 directory before the shared directory:
 
 B<Fragment:>
+
   my $engine = Template::EmbeddedPerl->new(
       directories => [
           '/srv/contacts/templates',
@@ -86,12 +87,14 @@ Put the template after C<__DATA__> in an installed module, then load it by
 package name:
 
 B<Fragment: MyApp/Email.pm>
+
   package MyApp::Email;
   1;
   __DATA__
   Hello, <%= shift %>!
 
 B<Fragment: application code>
+
   my $compiled = Template::EmbeddedPerl->from_data('MyApp::Email');
   my $text = $compiled->render('Ada');
   # Hello, Ada!
@@ -147,6 +150,7 @@ in-memory cache.
 This template accepts only a supplied C<name>:
 
 B<Fragment: greeting.epl>
+
   % args $name
   Hello, <%= $name %>!
 
@@ -161,6 +165,7 @@ without that value. Omitting C<name> raises a missing-required-argument error.
 This template renders C<Hello, world!> when C<name> is absent:
 
 B<Fragment: greeting.epl>
+
   % args $name = 'world'
   Hello, <%= $name %>!
 
@@ -175,6 +180,7 @@ arguments.
 The coderef runs only when C<heading> is absent:
 
 B<Fragment: page.epl>
+
   % args $title = 'Contacts', $heading = sub { uc $title }
   <h1><%= $heading %></h1>
 
@@ -190,6 +196,7 @@ C<display_heading> helper.
 An explicit C<undef> is supplied, so it suppresses the lazy default:
 
 B<Fragment: page.epl>
+
   % args $heading = sub { 'Contacts' }
   <h1><%= $heading %></h1>
 
@@ -207,6 +214,7 @@ instead of accepting a computed fallback.
 The declaration is the complete contract for this template:
 
 B<Fragment: greeting.epl>
+
   % args $name, $punctuation = '!'
   Hello, <%= $name %><%= $punctuation %>
 
@@ -238,6 +246,7 @@ are not escaped a second time.
 Mark only reviewed, trusted markup as raw:
 
 B<Fragment: page.epl>
+
   <main><%= raw $trusted_html %></main>
 
   # with $trusted_html = '<strong>Contacts</strong>'
@@ -251,6 +260,7 @@ the exact HTML context. It bypasses automatic escaping and is not a sanitizer.
 The C<safe> helper escapes a value once and returns a safe-string object:
 
 B<Fragment: application code>
+
   my $label = $engine->safe('<Ada>');
   my $html = $engine->from_string('<p><%= shift %></p>')->render($label);
   # <p>&lt;Ada&gt;</p>
@@ -264,6 +274,7 @@ safe and ordinary fragments while escaping each ordinary fragment once.
 Use C<url_encode> for one URL value, not an entire already-structured URL:
 
 B<Fragment: link.epl>
+
   <a href="/search?q=<%= url_encode $query %>">Search</a>
 
   # with $query = 'tea & cake'
@@ -278,6 +289,7 @@ Escape for JavaScript first, then mark that encoded string as raw so HTML
 escaping does not change its JavaScript escapes:
 
 B<Fragment: page.epl with auto_escape enabled>
+
   <script>
   const name = '<%= raw escape_javascript($name) %>';
   </script>
@@ -311,11 +323,13 @@ retain normal scalar-context behavior instead.
 The Contacts page renders each item through the checked-in partial:
 
 B<Fragment: examples/contacts/untyped/templates/pages/contacts.epl>
+
   % for my $contact (@$contacts) {
   %= partial 'contacts/item', contact => $contact, root_title => $title, parent_title => $title
   % }
 
 B<Fragment: examples/contacts/untyped/templates/contacts/item.epl>
+
   % args $contact, $root_title, $parent_title
   <li data-root="<%= $root_title %>" data-parent="<%= $parent_title %>"><strong><%= $contact->{name} %></strong> <%= $contact->{email} %></li>
 
@@ -329,6 +343,7 @@ Register layouts in the page; the first declaration becomes the outermost
 wrapper:
 
 B<Fragment: page.epl>
+
   % layout 'layouts/outer'
   % layout 'layouts/inner'
   body
@@ -344,6 +359,7 @@ layout has its own independent named argument contract.
 The layout below prints the body registered by its page:
 
 B<Fragment: layouts/application.epl>
+
   % args $title
   <title><%= $title %></title>
   <body><%= yield %></body>
@@ -359,10 +375,12 @@ composed page output does not get escaped a second time.
 Capture a named block in the page and yield it from the layout:
 
 B<Fragment: page.epl>
+
   % content_for head => sub { raw '<meta name="section" content="contacts">' }
   <main>Contacts</main>
 
 B<Fragment: layouts/application.epl>
+
   <head><%= yield 'head' %></head>
   <body><%= yield %></body>
 
@@ -377,11 +395,13 @@ when a layout should render a slot only when it is nonempty.
 Pass a final coderef to C<view>; its captured result becomes the wrapper's body:
 
 B<Fragment: caller template, with preamble => 'use v5.40;'>
+
   %= view 'HTML::Panel', title => 'Contacts', sub ($panel) {
   <main>Contacts</main>
   % }
 
 B<Fragment: html/panel.epl>
+
   <section class="panel">
   <h1><%= $self->title %></h1>
   <%= yield %>
@@ -415,6 +435,7 @@ executable directive.
 Add C<=> before the normal close marker to trim the expression itself:
 
 B<Fragment: template text>
+
   <%= "  Contacts  " =%>
 
   # Contacts
@@ -428,6 +449,7 @@ Add C<-> before the close marker to remove whitespace through the following
 newline:
 
 B<Fragment: template text>
+
   <% my $name = 'Ada'; -%>
   <p><%= $name %></p>
 
@@ -441,6 +463,7 @@ start with a blank line.
 Put a backslash immediately after the close marker:
 
 B<Fragment: template text>
+
   <% my $name = 'Ada'; %>\
   <p><%= $name %></p>
 
@@ -454,6 +477,7 @@ Write C<\\> when the output needs a literal trailing backslash.
 Escape a marker with a backslash:
 
 B<Fragment: template text>
+
   \% not a smart directive
   \<% not Perl %>
 
@@ -469,6 +493,7 @@ Configure all markers together when the default C<E<lt>%> syntax conflicts with
 the template language:
 
 B<Fragment: application setup>
+
   my $engine = Template::EmbeddedPerl->new(
       open_tag => '[[',
       close_tag => ']]',
@@ -592,6 +617,7 @@ arguments. Prefer C<args> for public named template inputs.
 Ask the engine for the directory that supplied a loaded package:
 
 B<Fragment: MyApp::Email has already been loaded>
+
   my $directory = Template::EmbeddedPerl->directory_for_package('MyApp::Email');
   my $engine = Template::EmbeddedPerl->new(
       directories => [$directory],
@@ -644,6 +670,7 @@ Give a narrow engine only the fixture directory and render a page that calls
 the target:
 
 B<Fragment: t/partial.t>
+
   my $engine = Template::EmbeddedPerl->new(
       directories => ['t/templates/composition'],
       smart_lines => 1,
@@ -667,6 +694,7 @@ examples of both forms.
 Pass C<source> whenever the input has a meaningful origin:
 
 B<Fragment: application code>
+
   my $compiled = $engine->from_string(
       "first\n<%= \$missing %>\n",
       source => 'emails/welcome.epl',
@@ -688,6 +716,7 @@ that cross partial, layout, or typed-view composition also end with a render
 stack:
 
 B<Fragment: error handling around a composed page>
+
   my $error = eval { $engine->from_file('pages/contacts')->render; '' } || $@;
   warn $error;
 

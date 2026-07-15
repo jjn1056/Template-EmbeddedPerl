@@ -22,6 +22,7 @@ use File::Temp qw(tempdir);
 use IPC::Open3;
 use JSON::PP qw(decode_json);
 use Symbol qw(gensym);
+use Pod::Simple::HTML;
 use Test::Most;
 use Template::EmbeddedPerl;
 
@@ -182,6 +183,30 @@ sub read_file {
     return $content;
 }
 
+sub malformed_labeled_verbatim_lines {
+    my ($pod) = @_;
+    my @lines = split /\n/, $pod, -1;
+    my @malformed;
+
+    for my $index (0 .. $#lines) {
+        next unless $lines[$index] =~ /^B<(?:Fragment:|Complete scratch file:)/;
+        push @malformed, $index + 1
+            unless ($lines[$index + 1] // '') eq ''
+                && ($lines[$index + 2] // '') =~ /^  \S/;
+    }
+
+    return \@malformed;
+}
+
+sub pod_html {
+    my ($pod) = @_;
+    my $html = '';
+    my $parser = Pod::Simple::HTML->new;
+    $parser->output_string(\$html);
+    $parser->parse_string_document($pod);
+    return $html;
+}
+
 sub write_fixture {
     my ($root, $identifier, $content) = @_;
     my @parts = split m{/}, "$identifier.epl";
@@ -253,6 +278,16 @@ my $tutorial_path = File::Spec->catfile(
 ok(-e $tutorial_path, 'installed tutorial POD exists');
 
 my $tutorial = -e $tutorial_path ? read_file($tutorial_path) : '';
+is_deeply(
+    malformed_labeled_verbatim_lines($tutorial),
+    [],
+    "$tutorial_path separates labeled examples from verbatim blocks",
+);
+like(
+    pod_html($tutorial),
+    qr{<p><b>Fragment: application fixture</b></p>\s*<pre>\s*sub contacts \{},
+    'rendered tutorial separates the fragment label from its code block',
+);
 for my $heading (
     'FIRST TEMPLATE',
     'THE CONTACTS APPLICATION',
@@ -442,6 +477,11 @@ my $cookbook_path = File::Spec->catfile(
 ok(-e $cookbook_path, 'installed cookbook POD exists');
 
 my $cookbook = -e $cookbook_path ? read_file($cookbook_path) : '';
+is_deeply(
+    malformed_labeled_verbatim_lines($cookbook),
+    [],
+    "$cookbook_path separates labeled examples from verbatim blocks",
+);
 for my $heading (
     'WHICH DOCUMENT SHOULD I READ?',
     'RENDERING AND LOADING',
@@ -472,6 +512,11 @@ my $typed_views_path = File::Spec->catfile(
 ok(-e $typed_views_path, 'installed typed-view cookbook POD exists');
 
 my $typed_views = -e $typed_views_path ? read_file($typed_views_path) : '';
+is_deeply(
+    malformed_labeled_verbatim_lines($typed_views),
+    [],
+    "$typed_views_path separates labeled examples from verbatim blocks",
+);
 for my $heading (
     'WHY INTRODUCE A TYPED VIEW?',
     'THE ROOT VIEW',
