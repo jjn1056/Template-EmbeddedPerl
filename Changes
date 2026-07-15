@@ -1,7 +1,5 @@
 The following logs changes for the CPAN distribution Template-EmbeddedPerl
 
-{{$NEXT}}
-
 0.001016 14 July 2026
           - Add smart lines and declarative named template arguments.
           - Add scalar and lazy argument defaults with improved argument
